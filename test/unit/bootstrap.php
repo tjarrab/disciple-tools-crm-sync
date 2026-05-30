@@ -74,6 +74,13 @@ if ( ! function_exists( 'plugin_dir_url' ) ) {
     }
 }
 
+if ( ! function_exists( 'register_activation_hook' ) ) {
+    function register_activation_hook( $file, $callback ): void {} // phpcs:ignore
+}
+if ( ! function_exists( 'register_deactivation_hook' ) ) {
+    function register_deactivation_hook( $file, $callback ): void {} // phpcs:ignore
+}
+
 // Main plugin class stub (provides encrypt/decrypt used by Connector_Registry)
 if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) {
     class Disciple_Tools_CRM_Sync {
