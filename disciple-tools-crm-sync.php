@@ -151,6 +151,8 @@ function dt_crm_sync_plugin_bootstrap() {
 
 // Main Class
 
+if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
+
 /**
  * Main plugin class for Disciple.Tools - CRM Sync.
  *
@@ -683,6 +685,8 @@ class Disciple_Tools_CRM_Sync {
         return null;
     }
 }
+
+endif; // class_exists 'Disciple_Tools_CRM_Sync'
 
 // Activation / Deactivation Hooks
 
