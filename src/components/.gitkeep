@@ -1,0 +1,3 @@
+# React SPA source files go here.
+# Build command (from plugin root): npm run build
+# Output: dist/importer-app.js + dist/importer-app.asset.php

@@ -1,0 +1,71 @@
+version: '3.8'
+
+# Local E2E environment for the disciple-tools-crm-sync Cypress tests.
+#
+# Usage:
+#   docker compose up -d          # start WordPress + MySQL
+#   npm run test:e2e               # run Cypress headlessly against localhost:8080
+#   npm run test:e2e:open          # open Cypress interactively
+#   docker compose down -v         # tear down and remove volumes
+#
+# First-time setup: after `docker compose up -d`, run:
+#   docker compose run --rm wpcli site install \
+#     --url=http://localhost:8080 --title="DT CRM Test" \
+#     --admin_user=admin --admin_password=password --admin_email=admin@example.com
+
+services:
+
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  wordpress:
+    image: wordpress:latest
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DEBUG: "1"
+    volumes:
+      # Mount the plugin directory into wp-content/plugins so WP can activate it.
+      - .:/var/www/html/wp-content/plugins/disciple-tools-crm-sync
+      - wp_data:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+
+  wpcli:
+    image: wordpress:cli
+    volumes:
+      - .:/var/www/html/wp-content/plugins/disciple-tools-crm-sync
+      - wp_data:/var/www/html
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+    depends_on:
+      - wordpress
+    # Override the default entrypoint so `docker compose run --rm wpcli <cmd>` works.
+    entrypoint: wp
+    user: "33:33"
+
+volumes:
+  db_data:
+  wp_data:

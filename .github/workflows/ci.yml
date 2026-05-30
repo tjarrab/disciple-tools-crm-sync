@@ -1,0 +1,85 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:5.7
+        env:
+          MYSQL_DATABASE: testdb
+          MYSQL_USER: user
+          MYSQL_PASSWORD: password
+          MYSQL_ROOT_PASSWORD: rootpassword
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    strategy:
+      fail-fast: true
+      matrix:
+        php: ['8.0', '8.2', '8.3']
+
+    name: PHP ${{ matrix.php }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          coverage: xdebug
+
+      - name: Report PHP version
+        run: php -v
+
+      - name: Install dependencies
+        run: composer install --no-interaction
+
+      - name: Test Syntax
+        run: ./test/test_for_syntax_errors.sh
+
+      - name: Test Installation
+        run: ./test/test_installation.sh
+
+      - name: Run unit tests
+        run: ./vendor/bin/phpunit -c phpunit-unit.xml.dist --coverage-text
+
+      - name: Setup integration tests
+        run: bash ./test/install-wp-tests.sh testdb user password 127.0.0.1:3306 latest true
+
+      - name: Run integration tests
+        run: ./vendor/bin/phpunit -c phpunit.xml.dist
+
+      - name: Setup E2E Environment
+        run: |
+          docker compose up -d
+          # Wait for WP to be ready
+          sleep 15
+          docker compose run --rm wpcli core install --url=http://localhost:8080 --title="DT CRM Test" --admin_user=admin --admin_password=password --admin_email=admin@example.com
+          # Install and activate DT theme
+          docker compose run --rm wpcli theme install https://github.com/DiscipleTools/disciple-tools-theme/releases/latest/download/disciple-tools-theme.zip --activate
+          # Skip the DT setup wizard and configure the plugin for E2E tests
+          docker compose run --rm wpcli option add dt_setup_wizard_completed 1
+          docker compose run --rm wpcli eval "update_option( 'dt_crm_sync_settings', array( 'active_connector' => 'respond_io', 'connectors' => array( 'respond_io' => array() ) ) ); echo 'Done';"
+          # Seed mock field schema transient so the field-mapping table renders in E2E tests
+          docker compose run --rm wpcli eval "set_transient( 'dt_crm_sync_field_schema_respond_io', array( array( 'slug' => 'test_field', 'label' => 'Test Field', 'name' => 'test_field' ) ), 3600 ); echo 'Done';"
+          # Activate the plugin
+          docker compose run --rm wpcli plugin activate disciple-tools-crm-sync
+          npm ci
+          npm run build
+
+      - name: Run E2E Tests
+        run: npm run test:e2e
+
+      - name: Test phpcs
+        run: ./test/test_phpcs.sh

@@ -1,0 +1,19 @@
+/**
+ * Admin status indicator classes.
+ *
+ * Referenced by tab-config.js and tab-automations.js.
+ * Using CSS classes instead of inline styles allows the colours to be
+ * overridden per admin colour scheme and supports future dark-mode styling.
+ */
+
+.dt-crm-status--neutral {
+    color: #646970; /* WP admin secondary / muted text */
+}
+
+.dt-crm-status--ok {
+    color: #46b450; /* WP admin success green */
+}
+
+.dt-crm-status--error {
+    color: #b32d2e; /* WP admin error red */
+}

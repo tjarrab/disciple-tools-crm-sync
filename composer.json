@@ -1,0 +1,26 @@
+{
+    "require": {},
+    "require-dev": {
+        "dealerdirect/phpcodesniffer-composer-installer": "1.*",
+        "wp-coding-standards/wpcs": "3.1.*",
+        "phpunit/phpunit": "^9.6",
+        "brain/monkey": "^2.6",
+        "mockery/mockery": "^1.5",
+        "yoast/phpunit-polyfills": "^1.1",
+        "doctrine/instantiator": "^1.5"
+    },
+    "autoload": {
+        "classmap": [
+            "import/",
+            "connectors/",
+            "rest-api/",
+            "webhook/",
+            "admin/"
+        ]
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    }
+}

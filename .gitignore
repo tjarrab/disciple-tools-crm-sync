@@ -1,0 +1,23 @@
+/node_modules/
+/dist/*.map
+/vendor/
+
+# Local environment variables
+.env
+
+# Cypress
+cypress.env.json
+/cypress/videos/
+/cypress/screenshots/
+
+# Test outputs
+phpcs-out.txt
+phpunit-unit-out.txt
+.phpunit.result.cache
+
+# Editor settings
+.vscode/
+
+# OS artifacts
+.DS_Store
+Thumbs.db

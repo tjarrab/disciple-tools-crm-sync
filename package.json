@@ -1,0 +1,29 @@
+{
+    "name": "disciple-tools-crm-sync-importer",
+    "version": "1.0.0",
+    "private": true,
+    "scripts": {
+        "build": "wp-scripts build src/importer-app.js --output-path=dist",
+        "start": "wp-scripts start src/importer-app.js --output-path=dist",
+        "test:e2e": "cypress run",
+        "test:e2e:open": "cypress open"
+    },
+    "devDependencies": {
+        "@wordpress/scripts": "^32.0.0",
+        "cypress": "^13.0.0"
+    },
+    "dependencies": {
+        "@wordpress/components": "^28.0.0",
+        "@wordpress/element": "^6.0.0",
+        "react": "^18.0.0",
+        "@wordpress/i18n": "^5.0.0",
+        "prop-types": "^15.8.1"
+    },
+    "overrides": {
+        "@babel/runtime": ">=7.26.10",
+        "serialize-javascript": "7.0.5",
+        "markdownlint-cli": {
+            "minimatch": "^3.1.4"
+        }
+    }
+}
