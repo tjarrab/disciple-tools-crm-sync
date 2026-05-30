@@ -38,7 +38,7 @@ The plugin is built around a **connector abstraction layer**: each supported CRM
 
 | Requirement | Minimum |
 |---|---|
-| PHP | 8.0+ |
+| PHP | 8.1+ |
 | WordPress | 6.0+ |
 | Disciple.Tools theme | 1.47+ |
 | PHP extension | `openssl` (required for AES-256-CBC credential encryption) |
@@ -209,7 +209,7 @@ A Respond.io custom field that was previously mapped has been renamed or deleted
 
 ## Contribution
 
-Contributions welcome. You can report issues and bugs in the [Issues](https://github.com/tjarrab/disciple-tools-crm-sync/issues) section of the repository. Code contributions should follow the guidelines in [CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions welcome. You can report issues and bugs in the [Issues](https://github.com/tjarrab/disciple-tools-crm-sync/issues) section of the repository. 
 
 Visit the [Disciple.Tools Community](https://disciple.tools) for more information about the Disciple.Tools project.
 
