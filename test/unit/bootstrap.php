@@ -62,6 +62,18 @@ if ( ! function_exists( 'is_wp_error' ) ) {
     }
 }
 
+if ( ! function_exists( 'plugin_dir_path' ) ) {
+    function plugin_dir_path( string $file ): string { // phpcs:ignore
+        return dirname( $file ) . '/';
+    }
+}
+
+if ( ! function_exists( 'plugin_dir_url' ) ) {
+    function plugin_dir_url( string $file ): string { // phpcs:ignore
+        return 'http://localhost/';
+    }
+}
+
 // Main plugin class stub (provides encrypt/decrypt used by Connector_Registry)
 if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) {
     class Disciple_Tools_CRM_Sync {
