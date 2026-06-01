@@ -94,6 +94,7 @@ export default function ContactTable( { contacts, selectedIds, onSelectionChange
                     <th scope="col">{ __( 'Phone', 'disciple-tools-crm-sync' ) }</th>
                     <th scope="col">{ __( 'Email', 'disciple-tools-crm-sync' ) }</th>
                     <th scope="col">{ __( 'Tags', 'disciple-tools-crm-sync' ) }</th>
+                    <th scope="col">{ __( 'Lifecycle', 'disciple-tools-crm-sync' ) }</th>
                 </tr>
             </thead>
             <tbody>
@@ -119,6 +120,7 @@ export default function ContactTable( { contacts, selectedIds, onSelectionChange
                             <td>{ contact.phone || '\u2014' }</td>
                             <td>{ contact.email || '\u2014' }</td>
                             <td>{ formatTags( contact.tags ) }</td>
+                            <td>{ contact.lifecycle || '\u2014' }</td>
                         </tr>
                     );
                 } ) }

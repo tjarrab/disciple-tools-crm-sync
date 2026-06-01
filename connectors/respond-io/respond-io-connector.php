@@ -78,9 +78,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
         /**
          * Returns the filter parameter field definitions exposed in the filter-creation UI.
          *
-         * Two fields are supported: a free-text search query and a tag filter. Both are
-         * passed through to get_contacts() as filter_params and translated into the
-         * Respond.io API filter body there.
+         * Three fields are supported: a free-text search query, a tag filter, and a
+         * lifecycle filter. Tag and lifecycle share the same exclusive_group value so
+         * the UI knows to clear one when the other is filled in — only one can be sent
+         * per request. Both are translated into Respond.io API filter conditions in
+         * get_contacts().
          *
          * @return array
          */
@@ -92,9 +94,17 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'type'  => 'text',
                 ],
                 [
-                    'slug'  => 'tag',
-                    'label' => __( 'Tag', 'disciple-tools-crm-sync' ),
-                    'type'  => 'text',
+                    'slug'            => 'tag',
+                    'label'           => __( 'Tag', 'disciple-tools-crm-sync' ),
+                    'type'            => 'text',
+                    'exclusive_group' => 'contact_filter',
+                ],
+                [
+                    'slug'            => 'lifecycle',
+                    'label'           => __( 'Lifecycle', 'disciple-tools-crm-sync' ),
+                    'type'            => 'text',
+                    'description'     => __( 'e.g. F2F Ready', 'disciple-tools-crm-sync' ),
+                    'exclusive_group' => 'contact_filter',
                 ],
             ];
         }
@@ -156,6 +166,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
          * Translates generic filter_params into the Respond.io API filter body
          * and forwards the call to the API client.
          *
+         * Tag and lifecycle are mutually exclusive — the UI enforces this, so only one
+         * will be present per request. Tag maps to a contactTag hasAnyOf condition;
+         * lifecycle maps to a lifecycle isEqualTo condition with a plain string value
+         * (not an array, unlike tag).
+         *
          * @return array|WP_Error
          */
         public function get_contacts( array $filter_params, ?string $cursor = null, int $limit = 50 ): array|\WP_Error {
@@ -173,6 +188,15 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'field'    => null,
                     'operator' => 'hasAnyOf',
                     'value'    => [ $filter_params['tag'] ],
+                ];
+            }
+
+            if ( ! empty( $filter_params['lifecycle'] ) ) {
+                $and_conditions[] = [
+                    'category' => 'lifecycle',
+                    'field'    => null,
+                    'operator' => 'isEqualTo',
+                    'value'    => $filter_params['lifecycle'],
                 ];
             }
 

@@ -25,7 +25,22 @@ export default function FilterBar( { onSubmit, isLoading } ) {
     } );
 
     function handleChange( slug, value ) {
-        setParams( ( prev ) => ( { ...prev, [ slug ]: value } ) );
+        const field = filterFields.find( ( f ) => f.slug === slug );
+        const group = field && field.exclusive_group;
+
+        setParams( ( prev ) => {
+            const next = { ...prev, [ slug ]: value };
+            // If this field belongs to an exclusive group and has a non-empty value,
+            // clear all other fields in the same group.
+            if ( group && value.trim() !== '' ) {
+                filterFields.forEach( ( f ) => {
+                    if ( f.slug !== slug && f.exclusive_group === group ) {
+                        next[ f.slug ] = '';
+                    }
+                } );
+            }
+            return next;
+        } );
     }
 
     function handleSubmit( e ) {

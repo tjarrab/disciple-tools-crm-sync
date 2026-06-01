@@ -243,6 +243,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                         $ff_slug  = sanitize_key( $ff['slug'] ?? '' );
                         $ff_label = $ff['label'] ?? $ff_slug;
                         $ff_desc  = $ff['description'] ?? '';
+                        $ff_group = sanitize_key( $ff['exclusive_group'] ?? '' );
                         if ( ! $ff_slug ) { continue; }
                         ?>
                         <tr>
@@ -255,7 +256,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                 <input type="text"
                                         id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
                                         name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
-                                        class="regular-text">
+                                        class="regular-text"
+                                        <?php if ( $ff_group ) : ?>data-exclusive-group="<?php echo esc_attr( $ff_group ); ?>"<?php endif; ?>>
                                 <?php if ( $ff_desc ) : ?>
                                     <p class="description"><?php echo esc_html( $ff_desc ); ?></p>
                                 <?php endif; ?>

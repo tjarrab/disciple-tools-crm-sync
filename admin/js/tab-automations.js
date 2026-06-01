@@ -21,6 +21,18 @@
         interval.addEventListener( 'change', toggle );
     }
 
+// Exclusive-group inputs: clear sibling fields in the same group when one is filled in.
+// This enforces the tag/lifecycle mutual exclusivity without hardcoding field names.
+    document.querySelectorAll( '[data-exclusive-group]' ).forEach( function( input ) {
+        input.addEventListener( 'input', function() {
+            if ( input.value.trim() === '' ) { return; }
+            var group = input.getAttribute( 'data-exclusive-group' );
+            document.querySelectorAll( '[data-exclusive-group="' + group + '"]' ).forEach( function( other ) {
+                if ( other !== input ) { other.value = ''; }
+            } );
+        } );
+    } );
+
 // Run-now buttons
     var api   = window.dtCrmSync || {};
     var root  = api.apiRoot  || '';

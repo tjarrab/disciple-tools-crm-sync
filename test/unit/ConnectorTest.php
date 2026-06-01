@@ -158,6 +158,43 @@ class ConnectorTest extends BrainMonkeyTestCase {
         $this->assertSame( [ 'vip' ], $conditions[0]['value'] );
     }
 
+// Lifecycle filter condition
+
+    public function test_get_contacts_lifecycle_filter_builds_is_equal_to_condition(): void {
+        $body       = $this->call_get_contacts_capture_body( [ 'lifecycle' => 'F2F Ready' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertCount( 1, $conditions );
+        $this->assertSame( 'lifecycle', $conditions[0]['category'] );
+        $this->assertNull( $conditions[0]['field'] );
+        $this->assertSame( 'isEqualTo', $conditions[0]['operator'] );
+        // Value must be a plain string, not an array (unlike the tag condition).
+        $this->assertSame( 'F2F Ready', $conditions[0]['value'] );
+    }
+
+    public function test_get_contacts_empty_lifecycle_produces_no_lifecycle_condition(): void {
+        $body       = $this->call_get_contacts_capture_body( [ 'lifecycle' => '' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertSame( [], $conditions );
+    }
+
+    public function test_get_contacts_tag_filter_unchanged_when_lifecycle_absent(): void {
+        $body       = $this->call_get_contacts_capture_body( [ 'tag' => 'vip', 'lifecycle' => '' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertCount( 1, $conditions );
+        $this->assertSame( 'contactTag', $conditions[0]['category'] );
+    }
+
+    public function test_get_contacts_lifecycle_filter_unchanged_when_tag_absent(): void {
+        $body       = $this->call_get_contacts_capture_body( [ 'tag' => '', 'lifecycle' => 'F2F Ready' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertCount( 1, $conditions );
+        $this->assertSame( 'lifecycle', $conditions[0]['category'] );
+    }
+
     public function test_get_contacts_normalises_utc_offset_timezone_string_to_iana_name(): void {
         $iana_tz = new class() {
             public function getName(): string { return 'Asia/Kolkata'; }
