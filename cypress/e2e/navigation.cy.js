@@ -8,6 +8,12 @@ describe( 'Tab navigation — browser history', () => {
         cy.dtLogin();
     } );
 
+    // testIsolation clears cookies before each test, so session must be restored
+    // each time — cy.session() returns from cache instantly after the first call.
+    beforeEach( () => {
+        cy.dtLogin();
+    } );
+
     it( 'restores the previous tab when the browser back button is used', () => {
         cy.visit( '/wp-admin/admin.php?page=disciple-tools-crm-sync&tab=automations' );
         cy.get( '.dt-crm-sync-admin', { timeout: 10000 } ).should( 'be.visible' );

@@ -62,16 +62,19 @@ describe( 'Translation tab', () => {
     } );
 
     it( 'displays a result message after clicking refresh models', () => {
+        // Mock a failed response so the JS error path sets the status span without
+        // triggering window.location.reload() (which the success path does, wiping
+        // the span before Cypress can assert it).
         cy.intercept( 'DELETE', '**/disciple-tools-crm-sync/v1/translation/models-cache', {
             statusCode: 200,
-            body: { success: true },
+            body: { success: false },
         } ).as( 'deleteModelsCache' );
 
         cy.get( '#tab-translation button' ).contains( /refresh models/i ).click();
         cy.wait( '@deleteModelsCache' );
 
-        // Wait for result message to appear.
-        cy.get( '#tab-translation #dt-translation-models-result, #tab-translation .notice, #tab-translation [role="status"]', {
+        // The error path sets a non-empty status message without reloading the page.
+        cy.get( '#tab-translation #dt-translation-models-result', {
             timeout: 10000,
         } ).should( 'be.visible' );
     } );
@@ -98,8 +101,10 @@ describe( 'Translation tab', () => {
         // Fill in a daily limit value (non-sensitive field that won't affect the system).
         cy.get( '#tab-translation input[name="translation_daily_limit"]' ).clear().type( '100' );
 
-        // Submit form.
-        cy.get( '#tab-translation button[name="save_translation_settings"], #tab-translation [type="submit"]' ).click();
+        // Submit form — target the primary Save Settings button specifically; the form
+        // also has an inline Save button in the API key row, so the selector must not
+        // be broad enough to match both.
+        cy.get( '#tab-translation button.button-primary[name="save_translation_settings"]' ).click();
 
         // Wait for page reload or AJAX response.
         cy.get( '#tab-translation .notice.notice-success, #tab-translation [role="status"]', {
