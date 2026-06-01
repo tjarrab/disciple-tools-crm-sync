@@ -100,9 +100,27 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
             $this->connector      = $connector_result;
             $this->matcher        = new Disciple_Tools_CRM_Sync_Contact_Matcher( $this->connector->get_meta_key_prefix() );
             $this->mapper         = new Disciple_Tools_CRM_Sync_Field_Mapper( $this->connector );
+
+            // Wire up the translation service when enabled and the API key decrypts cleanly.
+            $translation_settings = get_option( 'dt_crm_sync_translation_settings', [] );
+            $translation_service  = null;
+            if ( ! empty( $translation_settings['enabled'] ) && ! empty( $translation_settings['api_key'] ) ) {
+                $api_key = Disciple_Tools_CRM_Sync::decrypt_value( $translation_settings['api_key'] );
+                if ( false !== $api_key ) {
+                    $provider            = new Disciple_Tools_CRM_Sync_Gemini_Translation_Provider( $api_key, $translation_settings['model'] ?? '' );
+                    $translation_service = new Disciple_Tools_CRM_Sync_Translation_Service(
+                        $provider,
+                        new Disciple_Tools_CRM_Sync_Translation_Rate_Limiter(),
+                        $translation_settings['prompt'] ?? '',
+                        absint( $translation_settings['daily_limit'] ?? 0 )
+                    );
+                }
+            }
+
             $this->message_importer = new Disciple_Tools_CRM_Sync_Message_Importer(
                 $this->connector,
-                new Disciple_Tools_CRM_Sync_Media_Sideloader()
+                new Disciple_Tools_CRM_Sync_Media_Sideloader(),
+                $translation_service
             );
             $this->activity_feed_writer = new Disciple_Tools_CRM_Sync_Activity_Feed_Writer();
 

@@ -164,4 +164,78 @@ class MessageImporterTest extends BrainMonkeyTestCase {
             'comment_date_gmt must use gmdate() (UTC).'
         );
     }
+
+    // --- translation service injection ---
+
+    public function test_import_appends_translation_when_different_from_original(): void {
+        $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
+        $translation_service->method( 'translate' )->willReturn( 'Hello, how are you?' );
+
+        $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
+            $this->connector,
+            $this->sideloader,
+            $translation_service
+        );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [
+                    'messageId' => 'msg_1',
+                    'traffic'   => 'incoming',
+                    'message'   => [ 'text' => 'Hola, ¿cómo estás?' ],
+                    'status'    => [ [ 'timestamp' => 0 ] ],
+                ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        Functions\when( 'get_comments' )->justReturn( 0 );
+        Functions\when( 'sanitize_text_field' )->returnArg();
+
+        $importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls, 'Expected add_post_comment to be called.' );
+        $this->assertStringContainsString(
+            '<br><em>[Translation: Hello, how are you?]</em>',
+            $calls[0]['content'],
+            'Translation suffix should be appended when translation differs from original.'
+        );
+    }
+
+    public function test_import_skips_translation_suffix_when_same_as_original(): void {
+        $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
+        $translation_service->method( 'translate' )->willReturn( 'Hello world' );
+
+        $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
+            $this->connector,
+            $this->sideloader,
+            $translation_service
+        );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [
+                    'messageId' => 'msg_2',
+                    'traffic'   => 'incoming',
+                    'message'   => [ 'text' => 'Hello world' ],
+                    'status'    => [ [ 'timestamp' => 0 ] ],
+                ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        Functions\when( 'get_comments' )->justReturn( 0 );
+        Functions\when( 'sanitize_text_field' )->returnArg();
+
+        $importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls, 'Expected add_post_comment to be called.' );
+        $this->assertStringNotContainsString(
+            '[Translation:',
+            $calls[0]['content'],
+            'Translation suffix should not be appended when translation equals original.'
+        );
+    }
 }

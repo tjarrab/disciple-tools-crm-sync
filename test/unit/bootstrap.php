@@ -435,6 +435,11 @@ require_once $_plugin_root . '/rest-api/class-rest-config.php';
 require_once $_plugin_root . '/rest-api/class-rest-contacts.php';
 require_once $_plugin_root . '/rest-api/class-rest-filters.php';
 require_once $_plugin_root . '/rest-api/rest-api.php';
+require_once $_plugin_root . '/translation/abstract-translation-provider.php';
+require_once $_plugin_root . '/translation/gemini/gemini-translation-provider.php';
+require_once $_plugin_root . '/translation/class-translation-logger.php';
+require_once $_plugin_root . '/translation/class-translation-rate-limiter.php';
+require_once $_plugin_root . '/translation/class-translation-service.php';
 
 // Runtime WP function stubs (defined AFTER Patchwork so tests can re-mock)
 // These live in a separate file so Patchwork's stream-wrapper intercepts the

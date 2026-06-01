@@ -57,6 +57,8 @@ class RestApiTest extends TestCase {
         $this->assertArrayHasKey( self::NS . '/contacts', $routes );
         $this->assertArrayHasKey( self::NS . '/import', $routes );
         $this->assertArrayHasKey( self::NS . '/saved-filters', $routes );
+        $this->assertArrayHasKey( self::NS . '/translation/models-cache', $routes );
+        $this->assertArrayHasKey( self::NS . '/translation/test', $routes );
     }
 
 // Authentication
@@ -244,5 +246,62 @@ class RestApiTest extends TestCase {
     public function test_contacts_403_unauthenticated(): void {
         $response = $this->dispatch( 'GET', '/contacts', [], false );
         $this->assertSame( 403, $response->get_status() );
+    }
+
+// translation: models-cache
+
+    public function test_translation_models_cache_403_unauthenticated(): void {
+        $response = $this->dispatch( 'DELETE', '/translation/models-cache', [], false );
+        $this->assertSame( 403, $response->get_status() );
+    }
+
+    public function test_translation_models_cache_delete_success(): void {
+        // Pre-populate the transient so deletion has something to remove.
+        set_transient( 'dt_crm_sync_gemini_models', [ 'models/gemini-1.5-flash' ], 3600 );
+
+        $response = $this->dispatch( 'DELETE', '/translation/models-cache' );
+        $this->assertSame( 200, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertTrue( $data['success'] );
+
+        // Verify transient was deleted.
+        $this->assertFalse( get_transient( 'dt_crm_sync_gemini_models' ), 'Transient should be deleted after successful DELETE request.' );
+    }
+
+// translation: test
+
+    public function test_translation_test_403_unauthenticated(): void {
+        $response = $this->dispatch( 'POST', '/translation/test', [], false );
+        $this->assertSame( 403, $response->get_status() );
+    }
+
+    public function test_translation_test_400_missing_api_key(): void {
+        // No settings saved — API key is missing.
+        delete_option( 'dt_crm_sync_translation_settings' );
+
+        $response = $this->dispatch( 'POST', '/translation/test' );
+        $this->assertSame( 400, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertFalse( $data['success'] );
+        $this->assertStringContainsString( 'API key', $data['message'] );
+    }
+
+    public function test_translation_test_400_missing_model(): void {
+        // Save API key but no model selected.
+        $encrypted_key = Disciple_Tools_CRM_Sync::encrypt_value( 'test_key_12345' );
+        update_option( 'dt_crm_sync_translation_settings', [
+            'enabled' => true,
+            'api_key' => $encrypted_key,
+            'model'   => '', // no model selected
+        ] );
+
+        $response = $this->dispatch( 'POST', '/translation/test' );
+        $this->assertSame( 400, $response->get_status() );
+
+        $data = $response->get_data();
+        $this->assertFalse( $data['success'] );
+        $this->assertStringContainsString( 'model', $data['message'] );
     }
 }

@@ -2,14 +2,14 @@
 # This file is distributed under the same license as the Disciple.Tools - CRM Sync plugin.
 msgid ""
 msgstr ""
-"Project-Id-Version: Disciple.Tools - CRM Sync 1.0.6\n"
+"Project-Id-Version: Disciple.Tools - CRM Sync 1.0.2\n"
 "Report-Msgid-Bugs-To: https://wordpress.org/support/plugin/crm2dt\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-05-23T22:57:02+00:00\n"
+"POT-Creation-Date: 2026-06-01T00:00:00+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 "X-Domain: disciple-tools-crm-sync\n"
@@ -626,4 +626,149 @@ msgstr ""
 
 #: src/components/SessionExpiredBanner.js:18
 msgid "Your session has expired. Please reload the page to continue."
+msgstr ""
+
+#: connectors/respond-io/respond-io-connector.php:104
+msgid "Lifecycle"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:37
+msgid "You do not have permission to perform this action."
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:90
+msgid "API key could not be decrypted — please re-enter it below."
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:117
+msgid "Encryption failed — existing API key was preserved. Verify OpenSSL is functional."
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:136
+msgid "Translation"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:138
+msgid "AI Provider & Credentials"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:143
+msgid "AI Provider"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:149
+msgid "Google Gemini"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:157
+msgid "API Key"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:168
+msgid "Enter Gemini API key"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:173
+msgid "API key is set"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:177
+msgid "Save"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:184
+msgid "Model"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:190
+msgid "— save API key and refresh —"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:202
+msgid "Refresh Models"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:209
+msgid "Settings"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:213
+msgid "Enable Translation"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:221
+msgid "Enable message translation on import"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:228
+msgid "Translation Prompt"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:237
+msgid "This instruction is prepended to each message before sending to the AI provider. The message text is appended directly after."
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:244
+msgid "Max Translations per 24 Hours"
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:256
+msgid "0 = unlimited."
+msgstr ""
+
+#. translators: 1: count of translations sent, 2: hours remaining, 3: minutes remaining
+#: admin/tabs/class-tab-translation.php:262
+msgid "%1$d translations sent in current window — resets in %2$dh %3$dm."
+msgstr ""
+
+#: admin/tabs/class-tab-translation.php:278
+msgid "Test Translation"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:281
+msgid "Translation Logs"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:285
+msgid "All translation logs have been cleared."
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:293
+msgid "Clear Translation Logs"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:297
+msgid "This will permanently delete all translation log entries. This cannot be undone. Continue?"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:312
+msgid "Success"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:313
+msgid "Rate Limited"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:333
+msgid "Date (UTC)"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:334
+msgid "Contact ID"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:336
+msgid "HTTP"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:337
+msgid "Response Preview"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:338
+msgid "Error"
+msgstr ""
+
+#: admin/tabs/class-tab-logs.php:345
+msgid "No translation log entries found."
 msgstr ""

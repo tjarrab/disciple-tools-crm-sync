@@ -203,4 +203,120 @@ class RestApiTest extends BrainMonkeyTestCase {
         // unwrap the 'data' key and find 'wrapped_field' present, so no change.
         $this->config->expose_detect_schema_drift( [ 'data' => [ [ 'name' => 'wrapped_field' ] ] ] );
     }
+
+    // --- Translation REST endpoints ---
+
+    public function test_translation_delete_models_cache_requires_permission(): void {
+        Functions\when( 'current_user_can' )->justReturn( false );
+
+        $translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+        $result      = $translation->has_permission();
+
+        $this->assertInstanceOf( WP_Error::class, $result,
+        'DELETE /translation/models-cache must require manage_dt capability.' );
+    }
+
+    public function test_translation_delete_models_cache_success(): void {
+        $deleted_key = null;
+        Functions\when( 'delete_transient' )->alias( function ( $key ) use ( &$deleted_key ) {
+            $deleted_key = $key;
+            return true;
+        } );
+
+        $translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+        $response    = $translation->handle_delete_models_cache( new WP_REST_Request( 'DELETE', '' ) );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'dt_crm_sync_gemini_models', $deleted_key,
+        'DELETE /translation/models-cache must delete the Gemini models transient.' );
+    }
+
+    public function test_translation_test_400_missing_api_key(): void {
+        Functions\when( 'get_option' )->justReturn( [] ); // No settings saved
+
+        $translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+        $response    = $translation->handle_test_translation( new WP_REST_Request( 'POST', '' ) );
+
+        $this->assertSame( 400, $response->get_status(),
+        'POST /translation/test must return 400 when no API key is saved.' );
+    }
+
+    public function test_translation_test_400_missing_model(): void {
+        Functions\when( 'get_option' )->justReturn( [ 'api_key' => 'fake_encrypted_key' ] );
+        Functions\when( 'sanitize_text_field' )->returnArg();
+        // Mock decrypt to return a valid key
+        Disciple_Tools_CRM_Sync::$test_decrypt_fn = fn( $v ) => 'decrypted_key';
+
+        $translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+        $response    = $translation->handle_test_translation( new WP_REST_Request( 'POST', '' ) );
+
+        $this->assertSame( 400, $response->get_status(),
+        'POST /translation/test must return 400 when no model is selected.' );
+    }
+
+    public function test_translation_test_502_provider_error(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'api_key' => 'fake_encrypted_key',
+            'model'   => 'models/gemini-2.0-flash',
+            'prompt'  => 'translate: ',
+        ] );
+        Functions\when( 'sanitize_text_field' )->returnArg();
+        Disciple_Tools_CRM_Sync::$test_decrypt_fn = fn( $v ) => 'decrypted_key';
+
+        // Mock provider to return WP_Error
+        $provider = $this->createMock( Disciple_Tools_CRM_Sync_Gemini_Translation_Provider::class );
+        $provider->method( 'translate_with_meta' )->willReturn(
+            new WP_Error( 'api_error', 'API key invalid', [] )
+        );
+
+        // Since we can't easily inject the mocked provider without modifying production code,
+        // we'll mock wp_safe_remote_post instead to simulate a failed API call
+        Functions\when( 'add_query_arg' )->alias( fn( $args, $url = '' ) => $url . '?key=test' );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_safe_remote_post' )->justReturn( [
+            'response' => [ 'code' => 401 ],
+            'body'     => json_encode( [ 'error' => [ 'message' => 'Invalid API key' ] ] ),
+        ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 401 );
+        Functions\when( 'wp_remote_retrieve_body' )->alias( fn( $r ) => $r['body'] );
+
+        $translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+        $response    = $translation->handle_test_translation( new WP_REST_Request( 'POST', '' ) );
+
+        $this->assertSame( 502, $response->get_status(),
+        'POST /translation/test must return 502 when provider returns WP_Error.' );
+    }
+
+    public function test_translation_test_200_success(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'api_key' => 'fake_encrypted_key',
+            'model'   => 'models/gemini-2.0-flash',
+            'prompt'  => 'translate: ',
+        ] );
+        Functions\when( 'sanitize_text_field' )->returnArg();
+        Disciple_Tools_CRM_Sync::$test_decrypt_fn = fn( $v ) => 'decrypted_key';
+
+        // Mock successful API response
+        Functions\when( 'add_query_arg' )->alias( fn( $args, $url = '' ) => $url . '?key=test' );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_safe_remote_post' )->justReturn( [
+            'response' => [ 'code' => 200 ],
+            'body'     => json_encode( [
+                'candidates' => [
+                    [ 'content' => [ 'parts' => [ [ 'text' => 'Hello, how are you?' ] ] ] ],
+                ],
+            ] ),
+        ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->alias( fn( $r ) => $r['body'] );
+
+        $translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+        $response    = $translation->handle_test_translation( new WP_REST_Request( 'POST', '' ) );
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertTrue( $data['success'] ?? false );
+        $this->assertSame( 'Hello, how are you?', $data['translation'] ?? '' );
+        $this->assertSame( 200, $data['http_status'] ?? 0 );
+    }
 }

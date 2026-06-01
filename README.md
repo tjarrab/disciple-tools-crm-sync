@@ -20,6 +20,7 @@ The plugin is built around a **connector abstraction layer**: each supported CRM
 
 - Import contacts from a connected CRM platform into Disciple.Tools
 - Sync message and conversation history as DT contact comments
+- Translate incoming messages to English using AI (Google Gemini) with configurable daily limits
 - Receive real-time contact updates via CRM webhook triggers
 - Run scheduled polling filters to automatically import matching contacts on a configurable interval
 - Support multiple CRM platforms through the connector extension API
@@ -95,6 +96,18 @@ Browse and search contacts from your CRM, select one or more, and click **Import
 ### Tab 4 — Sync Logs
 
 Paginated log of all import activity with status filter (Success / Failed / Skipped / Merged). Each row links directly to the imported DT contact.
+
+### Tab 5 — Translation
+
+Configure AI-powered message translation for incoming CRM messages. When enabled, all message text is sent to the AI provider before being saved as a DT contact comment. If translation fails or the daily limit is reached, the original message is preserved.
+
+**Provider**: Currently supports Google Gemini. Enter your API key (encrypted at rest), choose a model from the dropdown, and save. Use **Refresh Models** to fetch the latest available models from Google.
+
+**Prompt**: Customize the instruction sent to the AI. The default prompt asks Gemini to translate non-English text into English while preserving formatting. The message text is appended directly after your prompt.
+
+**Daily Limit**: Set a maximum number of translations per 24-hour rolling window to control API costs. Set to `0` for unlimited. The current usage counter and reset timer are displayed below this field.
+
+**Test Translation**: Use the test button to verify your API key and model are working before enabling translation on live imports.
 
 ---
 
@@ -216,6 +229,11 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 ---
 
 ## Changelog
+
+### 1.0.1
+
+- Added the ability to filter respond.io contacts by lifecycle
+- Added AI translation by gemini for all messages, with a daily cut-off to avoid budget issues
 
 ### 1.0.0
 

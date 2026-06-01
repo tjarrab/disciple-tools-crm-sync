@@ -20,6 +20,7 @@ require_once __DIR__ . '/tabs/class-tab-config.php';
 require_once __DIR__ . '/tabs/class-tab-importer.php';
 require_once __DIR__ . '/tabs/class-tab-automations.php';
 require_once __DIR__ . '/tabs/class-tab-logs.php';
+require_once __DIR__ . '/tabs/class-tab-translation.php';
 
 // Main menu class
 
@@ -95,6 +96,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Menu' ) ) {
                         class="nav-tab<?php echo 'automations' === $tab ? ' nav-tab-active' : ''; ?>">
                         <?php esc_html_e( 'Automations', 'disciple-tools-crm-sync' ); ?>
                     </a>
+                    <a href="<?php echo esc_url( admin_url( $page_base . 'translation' ) ); ?>"
+                        data-tab="tab-translation"
+                        class="nav-tab<?php echo 'translation' === $tab ? ' nav-tab-active' : ''; ?>">
+                        <?php esc_html_e( 'Translation', 'disciple-tools-crm-sync' ); ?>
+                    </a>
                     <a href="<?php echo esc_url( admin_url( $page_base . 'logs' ) ); ?>"
                         data-tab="tab-logs"
                         class="nav-tab<?php echo 'logs' === $tab ? ' nav-tab-active' : ''; ?>">
@@ -111,6 +117,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Menu' ) ) {
                     </div>
                     <div id="tab-automations" class="dt-crm-sync-tab-panel"<?php echo 'automations' !== $tab ? ' style="display:none"' : ''; ?>>
                         <?php ( new Disciple_Tools_CRM_Sync_Tab_Automations() )->content(); ?>
+                    </div>
+                    <div id="tab-translation" class="dt-crm-sync-tab-panel"<?php echo 'translation' !== $tab ? ' style="display:none"' : ''; ?>>
+                        <?php ( new Disciple_Tools_CRM_Sync_Tab_Translation() )->content(); ?>
                     </div>
                     <div id="tab-logs" class="dt-crm-sync-tab-panel"<?php echo 'logs' !== $tab ? ' style="display:none"' : ''; ?>>
                         <?php ( new Disciple_Tools_CRM_Sync_Tab_Logs() )->content(); ?>
@@ -218,6 +227,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Menu' ) ) {
             wp_enqueue_script(
                 'dt-crm-sync-tab-automations',
                 DT_CRM_SYNC_URL . 'admin/js/tab-automations.js',
+                [ 'dt-crm-sync-admin-data' ],
+                DT_CRM_SYNC_VERSION,
+                true
+            );
+            wp_enqueue_script(
+                'dt-crm-sync-tab-translation',
+                DT_CRM_SYNC_URL . 'admin/js/tab-translation.js',
                 [ 'dt-crm-sync-admin-data' ],
                 DT_CRM_SYNC_VERSION,
                 true

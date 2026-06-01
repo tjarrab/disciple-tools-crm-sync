@@ -21,12 +21,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
     class Disciple_Tools_CRM_Sync_Message_Importer {
 
         /**
-         * @param Disciple_Tools_CRM_Sync_Abstract_Connector  $connector Used for get_messages() and get_meta_key_prefix().
-         * @param Disciple_Tools_CRM_Sync_Media_Sideloader    $sideloader Used to download attachment URLs.
+         * @param Disciple_Tools_CRM_Sync_Abstract_Connector         $connector          Used for get_messages() and get_meta_key_prefix().
+         * @param Disciple_Tools_CRM_Sync_Media_Sideloader           $sideloader         Used to download attachment URLs.
+         * @param Disciple_Tools_CRM_Sync_Translation_Service|null   $translation_service Optional; when set, translates message text before writing the comment.
          */
         public function __construct(
             private readonly Disciple_Tools_CRM_Sync_Abstract_Connector $connector,
-            private readonly Disciple_Tools_CRM_Sync_Media_Sideloader $sideloader
+            private readonly Disciple_Tools_CRM_Sync_Media_Sideloader $sideloader,
+            private readonly ?Disciple_Tools_CRM_Sync_Translation_Service $translation_service = null
         ) {}
 
         /**
@@ -129,6 +131,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
 
                     // Message body is nested under 'message.text' (confirmed from API docs).
                     $content = wp_kses_post( $msg['message']['text'] ?? '' );
+
+                    // Translate when enabled. Best-effort: on any failure the service
+                    // returns the original text and logs the error, so the comment is
+                    // never empty and the import is never blocked.
+                    if ( null !== $this->translation_service && '' !== $content ) {
+                        $translated = $this->translation_service->translate( $content, $respond_id );
+                        if ( $translated !== $content ) {
+                            $content .= '<br><em>[Translation: ' . esc_html( $translated ) . ']</em>';
+                        }
+                    }
 
                     // Attachment sideloading: only triggered when message type is 'attachment'.
                     // URL, mimeType, and filename are nested under the 'message' object.

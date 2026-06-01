@@ -31,12 +31,12 @@ class AdminTabTest extends BrainMonkeyTestCase {
         parent::setUp();
 
         // Functions defined in wp-function-stubs.php have sensible defaults and
-        // do NOT need re-stubbing here unless a specific test overrides them.
+        // do /NOT/ need re-stubbing here unless a specific test overrides them.
         // Only stub functions whose default stub returns the wrong type or causes
         // a fatal when called inside content().
 
         // sanitize_key / sanitize_text_field / wp_unslash are defined in
-        // bootstrap.php (before Patchwork) — they are NOT re-mockable.
+        // bootstrap.php (before Patchwork),  they are /not/ re-mockable.
         // Their bootstrap stubs return the input unchanged, which is fine.
 
         // wp_json_encode must delegate to json_encode.
@@ -601,5 +601,72 @@ class AdminTabTest extends BrainMonkeyTestCase {
             $html,
             'The "Not scheduled" placeholder must not appear when a legacy hook timestamp exists.'
         );
+    }
+
+// Tab_Logs — clear translation logs
+
+    /**
+     * A valid clear-translation-logs POST must execute a DELETE query against
+     * the translation logs table, not the main sync logs table.
+     */
+    public function test_tab_logs_clear_translation_logs_post_executes_delete_query(): void {
+        global $wpdb;
+
+        $_POST = [
+            'dt_crm_sync_clear_translation_logs_nonce' => 'test_nonce',
+        ];
+        $_GET  = [];
+
+        $wpdb->last_query_sql = null;
+
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        $this->run_tab_content( fn() => ( new Disciple_Tools_CRM_Sync_Tab_Logs() )->content() );
+
+        $this->assertNotNull(
+            $wpdb->last_query_sql,
+            '$wpdb->query() must be called to delete translation log entries.'
+        );
+        $this->assertStringContainsString(
+            'DELETE',
+            strtoupper( $wpdb->last_query_sql ),
+            'The executed query must be a DELETE statement.'
+        );
+        $this->assertStringContainsString(
+            'dt_crm_sync_translation_logs',
+            $wpdb->last_query_sql,
+            'The DELETE query must target the dt_crm_sync_translation_logs table.'
+        );
+    }
+
+    /**
+     * When check_admin_referer() dies on a clear-translation-logs POST, Tab_Logs
+     * must not execute any database query.
+     */
+    public function test_tab_logs_clear_translation_logs_aborts_invalid_nonce(): void {
+        $_POST['dt_crm_sync_clear_translation_logs_nonce'] = 'bad_nonce';
+
+        Functions\when( 'check_admin_referer' )->alias(
+            fn() => throw new \RuntimeException( 'Nonce check failed.' )
+        );
+
+        $this->expectException( \RuntimeException::class );
+        ( new Disciple_Tools_CRM_Sync_Tab_Logs() )->content();
+    }
+
+    /**
+     * When current_user_can('manage_dt') returns false on a clear-translation-logs
+     * POST, Tab_Logs must call wp_die() and must not execute any query.
+     */
+    public function test_tab_logs_clear_translation_logs_aborts_unauthorized(): void {
+        $_POST['dt_crm_sync_clear_translation_logs_nonce'] = 'valid_nonce';
+
+        Functions\when( 'current_user_can' )->justReturn( false );
+        Functions\when( 'wp_die' )->alias(
+            fn() => throw new \RuntimeException( 'wp_die called — permission denied.' )
+        );
+
+        $this->expectException( \RuntimeException::class );
+        ( new Disciple_Tools_CRM_Sync_Tab_Logs() )->content();
     }
 }

@@ -17,6 +17,19 @@ class CleanupTest extends TestCase {
     }
 
     /**
+     * Verify that plugin activation created the translation-logs table.
+     * Activation calls Translation_Logger::create_table() which uses dbDelta.
+     *
+     * @return void
+     */
+    public function test_translation_logs_table_exists(): void {
+        global $wpdb;
+        $table = $wpdb->prefix . 'dt_crm_sync_translation_logs';
+        $result = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+        $this->assertSame( $table, $result, "Expected table {$table} to exist after plugin activation." );
+    }
+
+    /**
      * Drop all DT-specific database tables created during the test run.
      *
      * @return void

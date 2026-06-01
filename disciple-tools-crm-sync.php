@@ -5,7 +5,7 @@
  * Author:            tjarrab
  * Author URI:        https://github.com/tjarrab
  * Description:       Imports and syncs contacts from CRM platforms into Disciple.Tools, with message history, webhook automation, and scheduled polling.
- * Version:           1.0.0
+ * Version:           1.0.1
  * Text Domain:       disciple-tools-crm-sync
  * Domain Path:       /languages
  * GitHub Plugin URI: https://github.com/tjarrab/disciple-tools-crm-sync
@@ -29,7 +29,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'DT_CRM_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DT_CRM_SYNC_URL', plugin_dir_url( __FILE__ ) );
-define( 'DT_CRM_SYNC_VERSION', '1.0.0' );
+define( 'DT_CRM_SYNC_VERSION', '1.0.1' );
 
 // Configuration (repo-specific values — edit config.php before release)
 require_once plugin_dir_path( __FILE__ ) . 'config.php';
@@ -213,6 +213,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             require_once DT_CRM_SYNC_PATH . 'connectors/respond-io/respond-io-connector.php';
             require_once DT_CRM_SYNC_PATH . 'connectors/metricool/metricool-api-client.php';
             require_once DT_CRM_SYNC_PATH . 'connectors/metricool/metricool-connector.php';
+
+    // Translation subsystem (loaded in all contexts — pure class definitions, no side effects)
+
+            require_once DT_CRM_SYNC_PATH . 'translation/abstract-translation-provider.php';
+            require_once DT_CRM_SYNC_PATH . 'translation/gemini/gemini-translation-provider.php';
+            require_once DT_CRM_SYNC_PATH . 'translation/class-translation-logger.php';
+            require_once DT_CRM_SYNC_PATH . 'translation/class-translation-rate-limiter.php';
+            require_once DT_CRM_SYNC_PATH . 'translation/class-translation-service.php';
 
     // Cron-only: processor and poll handler
 
@@ -524,6 +532,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
         ) $charset;";
 
             dbDelta( $sql );
+
+            // Translation logs table — same idempotent approach as above.
+            require_once DT_CRM_SYNC_PATH . 'translation/class-translation-logger.php';
+            Disciple_Tools_CRM_Sync_Translation_Logger::create_table();
 
             // Generate a plugin-specific 256-bit encryption key.
             // add_option() silently no-ops if the key already exists, so
