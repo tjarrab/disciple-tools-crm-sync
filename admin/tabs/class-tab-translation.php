@@ -112,18 +112,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Translation' ) ) {
             $mins_left     = floor( ( $secs_left % 3600 ) / 60 );
 
 // Admin notices
+            // .inline prevents WordPress admin JS from moving these notices to the top of the page.
             if ( 'success' === $notice ) {
-                echo '<div class="notice notice-success is-dismissible"><p>'
+                echo '<div class="notice notice-success is-dismissible inline"><p>'
                     . esc_html__( 'Settings saved.', 'disciple-tools-crm-sync' )
                     . '</p></div>';
             } elseif ( 'encrypt_error' === $notice ) {
-                echo '<div class="notice notice-error"><p>'
+                echo '<div class="notice notice-error inline"><p>'
                     . esc_html__( 'Encryption failed — existing API key was preserved. Verify OpenSSL is functional.', 'disciple-tools-crm-sync' )
                     . '</p></div>';
             }
 
             if ( ! empty( $models_error ) ) {
-                echo '<div class="notice notice-warning"><p>'
+                echo '<div class="notice notice-warning inline"><p>'
                     . esc_html( $models_error )
                     . '</p></div>';
             }
