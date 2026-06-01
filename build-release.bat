@@ -54,21 +54,70 @@ echo [2/4] Staging release files...
 if exist "%STAGE_DIR%" rmdir /s /q "%STAGE_DIR%"
 mkdir "%STAGE_DIR%\disciple-tools-crm-sync"
 
-:: Copy release folders (excludes src/, node_modules/, etc.)
-for %%D in (admin connectors dist documentation import languages rest-api webhook) do (
+:: Copy release folders (excludes src/, node_modules/, cypress/, test/, etc.)
+for %%D in (admin connectors dist documentation import languages rest-api translation webhook) do (
     if exist "%PLUGIN_DIR%\%%D" (
         robocopy "%PLUGIN_DIR%\%%D" "%STAGE_DIR%\disciple-tools-crm-sync\%%D" /E /NFL /NDL /NJH /NJS /NP >nul
     )
 )
 
 :: Copy release files
-for %%F in (config.php disciple-tools-crm-sync.php README.md uninstall.php version-control.json) do (
+for %%F in (config.php disciple-tools-crm-sync.php index.php LICENSE README.md uninstall.php version-control.json) do (
     if exist "%PLUGIN_DIR%\%%F" (
         copy /y "%PLUGIN_DIR%\%%F" "%STAGE_DIR%\disciple-tools-crm-sync\%%F" >nul
     )
 )
 
 echo       Files staged.
+echo.
+
+:: ----------------------------------------------------------
+:: Validate staged files before zipping
+::
+:: Every file listed here maps directly to a require_once call in the main
+:: plugin file. If any are missing the ZIP would produce a fatal on load,
+:: so we catch that here rather than shipping a broken release.
+:: ----------------------------------------------------------
+echo [2b/4] Validating staged files...
+set "STAGE_ROOT=%STAGE_DIR%\disciple-tools-crm-sync"
+set "VALIDATION_FAILED=0"
+
+for %%F in (
+    disciple-tools-crm-sync.php
+    config.php
+    index.php
+    uninstall.php
+    import\class-logger.php
+    connectors\abstract-connector.php
+    connectors\connector-registry.php
+    connectors\respond-io\respond-io-api-client.php
+    connectors\respond-io\respond-io-connector.php
+    connectors\metricool\metricool-api-client.php
+    connectors\metricool\metricool-connector.php
+    translation\abstract-translation-provider.php
+    translation\gemini\gemini-translation-provider.php
+    translation\class-translation-logger.php
+    translation\class-translation-rate-limiter.php
+    translation\class-translation-service.php
+    rest-api\rest-api.php
+    webhook\webhook-listener.php
+    admin\admin-menu-and-tabs.php
+) do (
+    if not exist "%STAGE_ROOT%\%%F" (
+        echo       MISSING: %%F
+        set "VALIDATION_FAILED=1"
+    )
+)
+
+if "!VALIDATION_FAILED!"=="1" (
+    echo.
+    echo ERROR: One or more required files are missing from the staged directory.
+    echo        Fix the staging step above and try again.
+    rmdir /s /q "%STAGE_DIR%"
+    pause
+    exit /b 1
+)
+echo       All required files present.
 echo.
 
 :: ----------------------------------------------------------

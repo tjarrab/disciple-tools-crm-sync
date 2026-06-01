@@ -21,7 +21,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Translation' ) ) {
     class Disciple_Tools_CRM_Sync_Tab_Translation {
 
         /** Default prompt sent to the AI provider before each message. */
-        private const DEFAULT_PROMPT = 'if the text is not in english, translate the text into english and return only the translation in the same formatting (spaces/grammatical markers), do not return any other text but the translation: ';
+        private const DEFAULT_PROMPT = 'If non-English, translate to English. Maintain formatting. Return ONLY the text, no explanations: ';
 
         /**
          * Handle settings POST and render the translation configuration form.
