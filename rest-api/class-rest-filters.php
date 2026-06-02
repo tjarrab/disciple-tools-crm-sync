@@ -252,8 +252,31 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Filters' ) ) {
             $manifest = get_option( 'dt_crm_sync_saved_filters', [] );
             $manifest = is_array( $manifest ) ? $manifest : [];
 
+            // Pick up any dt_crm_sync_poll events that are still in the cron table
+            // but no longer have a manifest entry (orphans). We have to do this
+            // before the loop, not after, because wp_clear_scheduled_hook() is what
+            // removes them and we need the IDs to call it correctly.
+            $cron_ids = [];
+            $cron_all = _get_cron_array();
+            if ( is_array( $cron_all ) ) {
+                foreach ( $cron_all as $hooks ) {
+                    if ( ! isset( $hooks['dt_crm_sync_poll'] ) ) {
+                        continue;
+                    }
+                    foreach ( $hooks['dt_crm_sync_poll'] as $hook_data ) {
+                        $args      = $hook_data['args'] ?? [];
+                        $filter_id = is_array( $args ) && isset( $args[0] ) ? sanitize_key( $args[0] ) : '';
+                        if ( '' !== $filter_id ) {
+                            $cron_ids[] = $filter_id;
+                        }
+                    }
+                }
+            }
+
+            $all_ids = array_unique( array_merge( $manifest, $cron_ids ) );
+
             $cleared = 0;
-            foreach ( $manifest as $filter_id ) {
+            foreach ( $all_ids as $filter_id ) {
                 $filter_id = sanitize_key( $filter_id );
                 wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
                 wp_clear_scheduled_hook( 'dt_crm_sync_poll_' . $filter_id ); // legacy

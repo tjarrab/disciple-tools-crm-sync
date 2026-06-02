@@ -86,4 +86,50 @@ class RestFiltersTest extends BrainMonkeyTestCase {
         $this->assertSame( 'purged', $data['status'] );
         $this->assertSame( 2, $data['filters_cleared'] );
     }
+
+    public function test_purge_all_removes_orphaned_event_not_in_manifest(): void {
+        // Manifest is empty — the filter was already removed — but there's still
+        // a scheduled cron event sitting in the cron array for it.
+        $cron_array = [
+            1748871600 => [
+                'dt_crm_sync_poll' => [
+                    md5( serialize( [ 'filter_orphan' ] ) ) => [ // phpcs:ignore
+                        'schedule' => 'daily',
+                        'args'     => [ 'filter_orphan' ],
+                        'interval' => DAY_IN_SECONDS,
+                    ],
+                ],
+            ],
+        ];
+
+        Functions\when( 'sanitize_key' )->returnArg();
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) {
+            if ( 'dt_crm_sync_saved_filters' === $key ) {
+                return []; // nothing in manifest
+            }
+            return $default;
+        } );
+        Functions\when( '_get_cron_array' )->justReturn( $cron_array );
+
+        // Should still clear the poll hook, the legacy variant, and the batch hook.
+        Functions\expect( 'wp_clear_scheduled_hook' )
+            ->times( 3 ) // dt_crm_sync_poll, legacy poll_filter_orphan, dt_crm_sync_process_batch
+            ->andReturn( false );
+        Functions\when( 'wp_next_scheduled' )->justReturn( false );
+        Functions\expect( 'delete_option' )
+            ->once()
+            ->andReturn( true );
+        Functions\expect( 'update_option' )
+            ->once()
+            ->with( 'dt_crm_sync_saved_filters', [] )
+            ->andReturn( true );
+
+        $controller = new Disciple_Tools_CRM_Sync_REST_Filters();
+        $response   = $controller->handle_purge_all_filters();
+
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'purged', $data['status'] );
+        $this->assertSame( 1, $data['filters_cleared'], 'Orphaned events must be counted even when not in the manifest.' );
+    }
 }

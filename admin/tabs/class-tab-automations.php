@@ -454,7 +454,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                 $batch_count,
                                 'disciple-tools-crm-sync'
                             ) ),
-                            $batch_count
+                            absint( $batch_count )
                         ); ?>
                     </p>
                 <?php endif; ?>
