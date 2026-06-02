@@ -389,6 +389,23 @@ class PollHandlerTest extends BrainMonkeyTestCase {
         $this->assertSame( range( 1, 8 ), $batch_ids );
     }
 
+    public function test_poll_handler_unschedules_itself_when_filter_not_found(): void {
+        // get_option returns false (filter was deleted) — handler should call
+        // wp_clear_scheduled_hook and return without scheduling any batch events.
+        Functions\when( 'get_option' )->justReturn( false );
+        Functions\expect( 'wp_clear_scheduled_hook' )
+            ->once()
+            ->with( 'dt_crm_sync_poll', [ self::FILTER_ID ] )
+            ->andReturn( 0 );
+        Functions\when( 'wp_insert_comment' )->justReturn( 1 );
+
+        $handler = new Disciple_Tools_CRM_Sync_Poll_Handler();
+        $handler->run_poll( self::FILTER_ID );
+        // Assertion is on the expect() above — if wp_clear_scheduled_hook is not
+        // called exactly once the test will fail.
+        $this->assertTrue( true );
+    }
+
     public function test_poll_rate_limit_reschedules(): void {
         $this->mock_get_option_for_filter( [ 'search' => '' ] );
 

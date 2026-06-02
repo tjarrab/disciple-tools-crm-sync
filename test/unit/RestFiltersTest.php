@@ -50,4 +50,40 @@ class RestFiltersTest extends BrainMonkeyTestCase {
         $this->assertInstanceOf( WP_REST_Response::class, $response );
         $this->assertSame( 201, $response->get_status(), 'Nested array filter_params must not cause a TypeError.' );
     }
+
+// handle_purge_all_filters
+
+    public function test_purge_all_filters_clears_manifest_and_returns_count(): void {
+        $manifest = [ 'filter_abc', 'filter_xyz' ];
+
+        Functions\when( 'sanitize_key' )->returnArg();
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) use ( $manifest ) {
+            if ( 'dt_crm_sync_saved_filters' === $key ) {
+                return $manifest;
+            }
+            return $default;
+        } );
+
+        // Both filters must have their poll hook and filter option cleared.
+        Functions\expect( 'wp_clear_scheduled_hook' )
+            ->times( 5 ) // dt_crm_sync_poll x2, legacy poll_{id} x2, dt_crm_sync_process_batch x1
+            ->andReturn( false );
+        Functions\when( 'wp_next_scheduled' )->justReturn( false );
+        Functions\expect( 'delete_option' )
+            ->times( 2 )
+            ->andReturn( true );
+        Functions\expect( 'update_option' )
+            ->once()
+            ->with( 'dt_crm_sync_saved_filters', [] )
+            ->andReturn( true );
+
+        $controller = new Disciple_Tools_CRM_Sync_REST_Filters();
+        $response   = $controller->handle_purge_all_filters();
+
+        $this->assertInstanceOf( WP_REST_Response::class, $response );
+        $this->assertSame( 200, $response->get_status() );
+        $data = $response->get_data();
+        $this->assertSame( 'purged', $data['status'] );
+        $this->assertSame( 2, $data['filters_cleared'] );
+    }
 }

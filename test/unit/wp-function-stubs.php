@@ -139,3 +139,12 @@ if ( ! function_exists( 'rest_url' ) ) {
 if ( ! function_exists( 'wp_create_nonce' ) ) {
     function wp_create_nonce( $action = -1 ): string { return 'test_nonce'; } // phpcs:ignore
 }
+if ( ! function_exists( '_get_cron_array' ) ) {
+    function _get_cron_array(): array { return []; } // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
+}
+if ( ! function_exists( '_set_cron_array' ) ) {
+    function _set_cron_array( array $cron ): void {} // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
+}
+if ( ! function_exists( '_n' ) ) {
+    function _n( string $single, string $plural, int $number, string $domain = 'default' ): string { return 1 === $number ? $single : $plural; } // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
+}
