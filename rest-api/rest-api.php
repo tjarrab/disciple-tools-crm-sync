@@ -22,6 +22,7 @@ require_once __DIR__ . '/abstract-rest-controller.php';
 require_once __DIR__ . '/class-rest-config.php';
 require_once __DIR__ . '/class-rest-contacts.php';
 require_once __DIR__ . '/class-rest-filters.php';
+require_once __DIR__ . '/class-rest-message-viewer.php';
 require_once __DIR__ . '/class-rest-translation.php';
 
 if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST' ) ) {
@@ -34,10 +35,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST' ) ) {
 
         private static ?self $instance = null;
 
-        private ?Disciple_Tools_CRM_Sync_REST_Config $config      = null;
-        private ?Disciple_Tools_CRM_Sync_REST_Contacts $contacts    = null;
-        private ?Disciple_Tools_CRM_Sync_REST_Filters $filters      = null;
-        private ?Disciple_Tools_CRM_Sync_REST_Translation $translation = null;
+        private ?Disciple_Tools_CRM_Sync_REST_Config $config         = null;
+        private ?Disciple_Tools_CRM_Sync_REST_Contacts $contacts       = null;
+        private ?Disciple_Tools_CRM_Sync_REST_Filters $filters         = null;
+        private ?Disciple_Tools_CRM_Sync_REST_Message_Viewer $message_viewer = null;
+        private ?Disciple_Tools_CRM_Sync_REST_Translation $translation  = null;
 
         /**
          * Returns the singleton instance, creating it on first call.
@@ -62,14 +64,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST' ) ) {
          * Instantiate each resource controller and register its routes.
          */
         public function add_api_routes(): void {
-            $this->config      = new Disciple_Tools_CRM_Sync_REST_Config();
-            $this->contacts    = new Disciple_Tools_CRM_Sync_REST_Contacts();
-            $this->filters     = new Disciple_Tools_CRM_Sync_REST_Filters();
-            $this->translation = new Disciple_Tools_CRM_Sync_REST_Translation();
+            $this->config         = new Disciple_Tools_CRM_Sync_REST_Config();
+            $this->contacts       = new Disciple_Tools_CRM_Sync_REST_Contacts();
+            $this->filters        = new Disciple_Tools_CRM_Sync_REST_Filters();
+            $this->message_viewer = new Disciple_Tools_CRM_Sync_REST_Message_Viewer();
+            $this->translation    = new Disciple_Tools_CRM_Sync_REST_Translation();
 
             $this->config->register_routes();
             $this->contacts->register_routes();
             $this->filters->register_routes();
+            $this->message_viewer->register_routes();
             $this->translation->register_routes();
         }
     }

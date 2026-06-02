@@ -232,6 +232,11 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.4
+
+- Added a message history viewer, when messages are mapped to a DT field, the raw field is hidden and replaced with a "View Message History" link that opens a clean, readable HTML page in a new tab
+- Switched Gemini translation to a single batch API call per contact instead of one call per message, to mitigate against PHP timeouts on long conversation histories
+
 ### 1.0.3
 
 - Added the ability to map Respond.io messages to different DT fields

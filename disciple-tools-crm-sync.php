@@ -5,7 +5,7 @@
  * Author:            tjarrab
  * Author URI:        https://github.com/tjarrab
  * Description:       Imports and syncs contacts from CRM platforms into Disciple.Tools, with message history, webhook automation, and scheduled polling.
- * Version:           1.0.3
+ * Version:           1.0.4
  * Text Domain:       disciple-tools-crm-sync
  * Domain Path:       /languages
  * GitHub Plugin URI: https://github.com/tjarrab/disciple-tools-crm-sync
@@ -29,7 +29,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'DT_CRM_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DT_CRM_SYNC_URL', plugin_dir_url( __FILE__ ) );
-define( 'DT_CRM_SYNC_VERSION', '1.0.3' );
+define( 'DT_CRM_SYNC_VERSION', '1.0.4' );
 
 // Configuration (repo-specific values — edit config.php before release)
 require_once plugin_dir_path( __FILE__ ) . 'config.php';
@@ -251,6 +251,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
 
             add_filter( 'dt_custom_fields_settings', [ $this, 'register_connector_sources' ], 10, 2 );
 
+            // When a DT field is used as the message history target it should be hidden
+            // from normal edit view — the viewer link below replaces it.
+            add_filter( 'dt_custom_fields_settings', [ $this, 'hide_message_history_field' ], 20, 2 );
+
+            // Render the "View Message History" link in the contact detail tile so
+            // users can open the conversation log without leaving the record.
+            add_action( 'dt_details_additional_section', [ $this, 'render_message_history_link' ], 10, 3 );
+
             require_once DT_CRM_SYNC_PATH . 'import/class-logger.php';
 
     // Connector subsystem (loaded in all contexts)
@@ -429,6 +437,75 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
                 }
             }
             return $fields;
+        }
+
+    // Message history field display
+
+        /**
+         * Prevent DT from auto-rendering the message history field in the contact
+         * edit view. When a DT field is used as the import target the raw text would
+         * appear as an editable textarea — the viewer link handled by
+         * render_message_history_link() replaces that with something more useful.
+         *
+         * @param array  $fields    DT field definitions keyed by field_key.
+         * @param string $post_type The post type being rendered.
+         * @return array
+         */
+        public function hide_message_history_field( array $fields, string $post_type ): array {
+            if ( 'contacts' !== $post_type ) {
+                return $fields;
+            }
+
+            $raw_mapping  = get_option( 'dt_crm_sync_field_mapping', [] );
+            $target_field = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+
+            if ( '' !== $target_field && ! in_array( $target_field, [ '__dt_note__', '__skip__' ], true ) && isset( $fields[ $target_field ] ) ) {
+                $fields[ $target_field ]['hidden'] = true;
+            }
+
+            return $fields;
+        }
+
+        /**
+         * Output a "View Message History" link in the contact's details tile when
+         * a mapped field is in use and already has data for this contact. The link
+         * opens the conversation log in a new browser tab via the REST viewer endpoint.
+         *
+         * @param string $section   Tile/section ID being rendered (e.g. 'details', 'status').
+         * @param string $post_type Post type of the record being displayed.
+         * @param int    $post_id   ID of the current post.
+         */
+        public function render_message_history_link( string $section, string $post_type, int $post_id ): void {
+            if ( 'details' !== $section || 'contacts' !== $post_type ) {
+                return;
+            }
+
+            $raw_mapping  = get_option( 'dt_crm_sync_field_mapping', [] );
+            $target_field = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+
+            if ( '' === $target_field || in_array( $target_field, [ '__dt_note__', '__skip__' ], true ) ) {
+                return;
+            }
+
+            if ( empty( get_post_meta( $post_id, $target_field, true ) ) ) {
+                return;
+            }
+
+            $url = add_query_arg(
+                '_wpnonce',
+                wp_create_nonce( 'wp_rest' ),
+                rest_url( 'disciple-tools-crm-sync/v1/message/' . $post_id )
+            );
+            ?>
+            <div class="section-subheader">
+                <?php esc_html_e( 'Message History', 'disciple-tools-crm-sync' ); ?>
+            </div>
+            <div>
+                <a href="<?php echo esc_url( $url ); ?>" target="_blank" rel="noopener noreferrer">
+                    <?php esc_html_e( 'View Message History', 'disciple-tools-crm-sync' ); ?>
+                </a>
+            </div>
+            <?php
         }
 
     // Filter management
