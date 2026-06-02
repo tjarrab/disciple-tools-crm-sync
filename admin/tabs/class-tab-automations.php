@@ -365,6 +365,136 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
             // wp_enqueue_script( 'dt-crm-sync-tab-automations' ) in enqueue_scripts().
             // window.dtCrmSync (populated by wp_localize_script) provides API data.
             ?>
+
+            <hr style="margin: 24px 0;">
+
+            <h2><?php esc_html_e( 'Cron Event Diagnostics', 'disciple-tools-crm-sync' ); ?></h2>
+            <p class="description">
+                <?php esc_html_e( 'A snapshot of scheduled WordPress cron events for this plugin and DT core. Reload the page to refresh.', 'disciple-tools-crm-sync' ); ?>
+            </p>
+
+            <?php
+            $cron_all = _get_cron_array();
+            $cron_all = is_array( $cron_all ) ? $cron_all : [];
+
+            $plugin_poll_events = [];
+            $batch_count        = 0;
+            foreach ( $cron_all as $ts => $hooks ) {
+                if ( isset( $hooks['dt_crm_sync_poll'] ) ) {
+                    foreach ( $hooks['dt_crm_sync_poll'] as $hook_data ) {
+                        $args      = $hook_data['args'] ?? [];
+                        $filter_id = is_array( $args ) && isset( $args[0] ) ? sanitize_key( $args[0] ) : '';
+                        $plugin_poll_events[] = [
+                            'filter_id'   => $filter_id,
+                            'next_ts'     => $ts,
+                            'in_manifest' => in_array( $filter_id, $manifest, true ),
+                        ];
+                    }
+                }
+                if ( isset( $hooks['dt_crm_sync_process_batch'] ) ) {
+                    $batch_count += count( $hooks['dt_crm_sync_process_batch'] );
+                }
+            }
+
+            // DT core hooks we want to show in the read-only section.
+            $dt_core_hook_labels = [
+                'dt_daily_notification_schedule' => __( 'DT Notifications Scheduler (daily)', 'disciple-tools-crm-sync' ),
+                'update-required'                => __( 'DT Contact Update Checker', 'disciple-tools-crm-sync' ),
+            ];
+            $dt_core_events = [];
+            foreach ( $cron_all as $ts => $hooks ) {
+                foreach ( $dt_core_hook_labels as $hook_name => $label ) {
+                    if ( isset( $hooks[ $hook_name ] ) && ! isset( $dt_core_events[ $hook_name ] ) ) {
+                        $dt_core_events[ $hook_name ] = [
+                            'label'   => $label,
+                            'next_ts' => $ts,
+                        ];
+                    }
+                }
+            }
+            ?>
+
+            <h3><?php esc_html_e( "This Plugin's Events", 'disciple-tools-crm-sync' ); ?></h3>
+
+            <?php if ( empty( $plugin_poll_events ) && 0 === $batch_count ) : ?>
+                <p><?php esc_html_e( 'No plugin cron events are currently scheduled.', 'disciple-tools-crm-sync' ); ?></p>
+            <?php else : ?>
+                <?php if ( ! empty( $plugin_poll_events ) ) : ?>
+                    <table class="widefat striped" style="max-width: 700px; margin-bottom: 12px;">
+                        <thead>
+                            <tr>
+                                <th><?php esc_html_e( 'Filter ID', 'disciple-tools-crm-sync' ); ?></th>
+                                <th><?php esc_html_e( 'Next Run', 'disciple-tools-crm-sync' ); ?></th>
+                                <th><?php esc_html_e( 'Status', 'disciple-tools-crm-sync' ); ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ( $plugin_poll_events as $ev ) : ?>
+                                <tr>
+                                    <td><code><?php echo esc_html( $ev['filter_id'] ); ?></code></td>
+                                    <td><?php echo esc_html( wp_date( 'Y-m-d H:i', $ev['next_ts'] ) ); ?></td>
+                                    <td>
+                                        <?php if ( $ev['in_manifest'] ) : ?>
+                                            <span style="color: #46b450;">&#10003; <?php esc_html_e( 'Active', 'disciple-tools-crm-sync' ); ?></span>
+                                        <?php else : ?>
+                                            <span style="color: #dc3232;">&#9888; <?php esc_html_e( 'Orphaned — no matching saved filter', 'disciple-tools-crm-sync' ); ?></span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
+                <?php if ( $batch_count > 0 ) : ?>
+                    <p>
+                        <?php printf(
+                            esc_html( _n(
+                                '%d pending batch import event queued.',
+                                '%d pending batch import events queued.',
+                                $batch_count,
+                                'disciple-tools-crm-sync'
+                            ) ),
+                            $batch_count
+                        ); ?>
+                    </p>
+                <?php endif; ?>
+            <?php endif; ?>
+
+            <p>
+                <button type="button"
+                        id="dt-crm-sync-purge-all"
+                        class="button button-secondary">
+                    <?php esc_html_e( 'Emergency Purge All Plugin Events', 'disciple-tools-crm-sync' ); ?>
+                </button>
+                <span id="dt-crm-sync-purge-status" style="margin-left: 10px; font-size: 0.85em;"></span>
+            </p>
+
+            <?php if ( ! empty( $dt_core_events ) ) : ?>
+                <h3 style="margin-top: 24px;"><?php esc_html_e( 'DT Core Events (read-only)', 'disciple-tools-crm-sync' ); ?></h3>
+                <div class="notice notice-info inline" style="margin: 0 0 12px;">
+                    <p>
+                        <?php esc_html_e( "These events are scheduled by the DT core plugin when contacts are created or updated. They're expected — removing them would break DT notifications and contact update checks. This plugin does not manage them.", 'disciple-tools-crm-sync' ); ?>
+                    </p>
+                </div>
+                <table class="widefat striped" style="max-width: 700px;">
+                    <thead>
+                        <tr>
+                            <th><?php esc_html_e( 'Hook', 'disciple-tools-crm-sync' ); ?></th>
+                            <th><?php esc_html_e( 'Description', 'disciple-tools-crm-sync' ); ?></th>
+                            <th><?php esc_html_e( 'Next Run', 'disciple-tools-crm-sync' ); ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ( $dt_core_events as $hook_name => $ev ) : ?>
+                            <tr>
+                                <td><code><?php echo esc_html( $hook_name ); ?></code></td>
+                                <td><?php echo esc_html( $ev['label'] ); ?></td>
+                                <td><?php echo esc_html( wp_date( 'Y-m-d H:i', $ev['next_ts'] ) ); ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
             <?php
         }
     }

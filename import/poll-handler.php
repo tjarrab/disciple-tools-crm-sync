@@ -29,7 +29,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
 // Load and validate the stored filter envelope
             $raw = get_option( 'dt_crm_sync_saved_filter_' . $filter_id );
             if ( false === $raw || '' === $raw ) {
-                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'failed', 'Saved filter not found.' );
+                // The filter was deleted but the cron event wasn't cleared, unschedule it
+                // now so it doesn't keep firing and generating failed log entries.
+                wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'failed', 'Saved filter not found. Recurring event has been unscheduled.' );
                 return;
             }
 

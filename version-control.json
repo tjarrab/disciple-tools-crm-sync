@@ -1,12 +1,12 @@
-{
+﻿{
     "name":  "Disciple.Tools - CRM Sync",
-    "version":  "1.0.1",
+    "version":  "1.0.2",
     "last_updated":  "2026-06",
     "author":  "tjarrab",
     "author_homepage":  "https://github.com/tjarrab",
     "git_owner":  "tjarrab",
     "git_repo":  "disciple-tools-crm-sync",
-    "download_url":  "https://github.com/tjarrab/disciple-tools-crm-sync/releases/download/v1.01/disciple-tools-crm-sync-1.0.1.zip",
+    "download_url":  "https://github.com/tjarrab/disciple-tools-crm-sync/releases/download/v1.0.2/disciple-tools-crm-sync-1.0.2.zip",
     "homepage":  "https://github.com/tjarrab/disciple-tools-crm-sync",
     "issues_url":  "https://github.com/tjarrab/disciple-tools-crm-sync/issues",
     "projects_url":  "https://github.com/tjarrab/disciple-tools-crm-sync/projects",
@@ -25,6 +25,6 @@
     "sections":  {
                      "description":  "Syncs contacts from CRM platforms into Disciple.Tools with message history, webhook automation, and scheduled polling.",
                      "installation":  "(Required) You must have Disciple.Tools Theme installed before using this plugin. Once Disciple.Tools is installed, you can use the normal Plugin system to install the plugin.",
-                     "changelog":  "\u003ch4\u003e1.0.1\u003c/h4\u003e\u003cul\u003e\u003cli\u003eAdded the ability to filter respond.io contacts by lifecycle\u003c/li\u003e\u003cli\u003eAdded AI translation by gemini for all messages, with a daily cut-off to avoid budget issues\u003c/li\u003e\u003c/ul\u003e\u003ch4\u003e1.0.0\u003c/h4\u003e\u003cul\u003e\u003cli\u003eInitial public release as Disciple.Tools - CRM Sync\u003c/li\u003e\u003cli\u003eConnector abstraction layer for multi-CRM support via the \u003ccode\u003edt_crm_sync_connectors\u003c/code\u003e filter\u003c/li\u003e\u003cli\u003eBundled Respond.io connector with contact import, message history sync, webhook support, and scheduled polling\u003c/li\u003e\u003cli\u003eAES-256-CBC encryption for CRM credentials stored in wp_options\u003c/li\u003e\u003cli\u003eSaved filter automations with hourly, every-2-hours, every-4-hours, every-8-hours, and daily polling intervals\u003c/li\u003e\u003cli\u003eSync log viewer with status filtering (Success / Failed / Skipped / Merged) and direct links to imported DT contacts\u003c/li\u003e\u003cli\u003eRate-limit handling: automatic rescheduling on HTTP 429 / 449 responses\u003c/li\u003e\u003c/ul\u003e"
+                     "changelog":  "\u003ch4\u003e1.0.2\u003c/h4\u003e\u003cul\u003e\u003cli\u003eCron diagnostics panel on the Automations tab shows active and orphaned scheduled events, and explains DT core events\u003c/li\u003e\u003cli\u003eDelete automation now verifies the cron event was removed, with a direct fallback if wp_clear_scheduled_hook didn\u0027t work\u003c/li\u003e\u003cli\u003ePoll handler now self-heals orphaned cron events by unscheduling itself when the saved filter no longer exists\u003c/li\u003e\u003cli\u003eEmergency Purge All Plugin Events button clears all plugin cron events immediately\u003c/li\u003e\u003cli\u003eDelete errors are now shown inline instead of silently reloading the page\u003c/li\u003e\u003c/ul\u003e\u003ch4\u003e1.0.1\u003c/h4\u003e\u003cul\u003e\u003cli\u003eAdded the ability to filter respond.io contacts by lifecycle\u003c/li\u003e\u003cli\u003eAdded AI translation by gemini for all messages, with a daily cut-off to avoid budget issues\u003c/li\u003e\u003c/ul\u003e\u003ch4\u003e1.0.0\u003c/h4\u003e\u003cul\u003e\u003cli\u003eInitial public release as Disciple.Tools - CRM Sync\u003c/li\u003e\u003cli\u003eConnector abstraction layer for multi-CRM support via the \u003ccode\u003edt_crm_sync_connectors\u003c/code\u003e filter\u003c/li\u003e\u003cli\u003eBundled Respond.io connector with contact import, message history sync, webhook support, and scheduled polling\u003c/li\u003e\u003cli\u003eAES-256-CBC encryption for CRM credentials stored in wp_options\u003c/li\u003e\u003cli\u003eSaved filter automations with hourly, every-2-hours, every-4-hours, every-8-hours, and daily polling intervals\u003c/li\u003e\u003cli\u003eSync log viewer with status filtering (Success / Failed / Skipped / Merged) and direct links to imported DT contacts\u003c/li\u003e\u003cli\u003eRate-limit handling: automatic rescheduling on HTTP 429 / 449 responses\u003c/li\u003e\u003c/ul\u003e"
                  }
 }

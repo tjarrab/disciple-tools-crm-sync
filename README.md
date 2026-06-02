@@ -230,6 +230,10 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.2
+
+- Fixing an issue with the cron tasks not cleaning up nicely
+
 ### 1.0.1
 
 - Added the ability to filter respond.io contacts by lifecycle

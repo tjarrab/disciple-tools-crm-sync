@@ -204,6 +204,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Menu' ) ) {
                         'queued'               => __( 'Queued!', 'disciple-tools-crm-sync' ),
                         'failed'               => __( 'Failed', 'disciple-tools-crm-sync' ),
                         'deleteFilterConfirm'  => __( 'Delete this filter? This will stop all scheduled imports for it.', 'disciple-tools-crm-sync' ),
+                        'deleteFilterError'    => __( 'Delete failed. Check the browser console and try reloading the page.', 'disciple-tools-crm-sync' ),
+                        'purgeAllConfirm'      => __( 'Remove all scheduled plugin cron events? This will stop all scheduled polling until filters are re-added.', 'disciple-tools-crm-sync' ),
+                        'purging'              => __( 'Purging\u2026', 'disciple-tools-crm-sync' ),
                     ],
                 ]
             );

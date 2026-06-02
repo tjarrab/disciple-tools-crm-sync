@@ -170,8 +170,34 @@
                 window.location.reload();
             } )
             .catch( function() {
-                window.location.reload();
+                var notice = document.createElement( 'div' );
+                notice.className = 'notice notice-error inline';
+                notice.style.cssText = 'margin: 4px 0; padding: 6px 10px;';
+                notice.innerHTML = '<p>' + ( i18n.deleteFilterError || 'Delete failed. Check the browser console and try reloading.' ) + '</p>';
+                form.insertAdjacentElement( 'afterend', notice );
             } );
         } );
     } );
+
+// Purge-all button
+    var btnPurge = document.getElementById( 'dt-crm-sync-purge-all' );
+    if ( btnPurge ) {
+        btnPurge.addEventListener( 'click', function() {
+            var message = i18n.purgeAllConfirm || 'Remove all scheduled plugin cron events? This will stop all scheduled polling.';
+            if ( ! window.confirm( message ) ) { return; }
+            btnPurge.disabled = true;
+            var statusEl = document.getElementById( 'dt-crm-sync-purge-status' );
+            if ( statusEl ) { statusEl.textContent = i18n.purging || 'Purging\u2026'; }
+            fetch( root + '/saved-filters/purge', {
+                method  : 'DELETE',
+                headers : { 'X-WP-Nonce': nonce, 'Content-Type': 'application/json' },
+            } )
+            .then( function( r ) { return r.json(); } )
+            .then( function() { window.location.reload(); } )
+            .catch( function() {
+                if ( statusEl ) { statusEl.textContent = i18n.requestError || 'Request error'; }
+                btnPurge.disabled = false;
+            } );
+        } );
+    }
 } )();
