@@ -109,7 +109,9 @@ class MessageImporterIntegrationTest extends TestCase {
     }
 
     /**
-     * The comment author field must reflect the traffic direction.
+     * All conversation log notes are written under a single 'Respond.io' author.
+     * The traffic direction (Agent / Contact) lives inside the comment content,
+     * not in comment_author — the log is one consolidated note, not per-message.
      */
     public function test_import_sets_correct_comment_author_for_outgoing_message(): void {
         $message = $this->make_message( 'msg_002', 'Hello from agent', 'outgoing' );
@@ -122,14 +124,20 @@ class MessageImporterIntegrationTest extends TestCase {
 
         $comments = $this->get_test_comments();
         $this->assertCount( 1, $comments );
-        $this->assertSame( 'Agent', $comments[0]->comment_author );
+        $this->assertSame( 'Respond.io', $comments[0]->comment_author );
+        $this->assertStringContainsString(
+            'Agent',
+            $comments[0]->comment_content,
+            'The sender label must appear inside the log content.'
+        );
     }
 
 // Deduplication
 
     /**
-     * Importing the same message twice must not create a duplicate comment.
-     * The deduplication key is the `_respond_io_message_id` comment meta.
+     * Running the importer twice for the same contact must not create a second
+     * comment. The importer stores the comment ID in post meta and calls
+     * wp_update_comment() on subsequent runs instead of inserting a new one.
      */
     public function test_import_skips_already_imported_message(): void {
         $message = $this->make_message( 'msg_dup', 'Duplicate message', 'incoming' );
@@ -148,13 +156,14 @@ class MessageImporterIntegrationTest extends TestCase {
         $this->assertCount(
             1,
             $comments,
-            'The same message must not be imported twice (deduplication via comment meta).'
+            'Re-importing must update the existing log comment, not create a second one.'
         );
     }
 
     /**
-     * After a successful comment is inserted, the message ID must be stored
-     * as `_respond_io_message_id` comment meta for deduplication.
+     * After the log comment is created, the importer must store its ID in post
+     * meta so subsequent runs can update it in place. The meta key follows the
+     * connector prefix convention: `_respond_io_message_log_comment_id`.
      */
     public function test_import_stores_message_id_as_comment_meta(): void {
         $message = $this->make_message( 'msg_meta_check', 'Meta test', 'incoming' );
@@ -165,18 +174,23 @@ class MessageImporterIntegrationTest extends TestCase {
 
         $this->importer->import( 'rid_001', $this->post_id, 0 );
 
-        $comments = $this->get_test_comments();
+        $comments   = $this->get_test_comments();
         $this->assertCount( 1, $comments );
 
-        $meta_value = get_comment_meta( (int) $comments[0]->comment_ID, '_respond_io_message_id', true );
-        $this->assertSame( 'msg_meta_check', $meta_value, 'Message ID must be stored as comment meta.' );
+        $stored_id = get_post_meta( $this->post_id, '_respond_io_message_log_comment_id', true );
+        $this->assertSame(
+            (string) $comments[0]->comment_ID,
+            (string) $stored_id,
+            'The log comment ID must be saved in post meta for upsert on next import.'
+        );
     }
 
 // Attachment messages
 
     /**
-     * An attachment message must produce a comment that includes a link to
-     * the attachment URL (either local or original fallback).
+     * Attachment messages get sideloaded to the media library, but the URL is
+     * intentionally left out of the log — CDN links expire and the sideloaded
+     * path can change. What matters is that the log records something happened.
      */
     public function test_import_attachment_message_stores_url_in_comment(): void {
         $attachment_url = 'https://cdn.respond.io/file.pdf';
@@ -206,14 +220,9 @@ class MessageImporterIntegrationTest extends TestCase {
         $comments = $this->get_test_comments();
         $this->assertCount( 1, $comments );
         $this->assertStringContainsString(
-            $attachment_url,
+            '[Attachment]',
             $comments[0]->comment_content,
-            'Attachment URL must appear in the comment content.'
-        );
-        $this->assertStringContainsString(
-            '[attachment]',
-            $comments[0]->comment_content,
-            'Comment must include [attachment] link label.'
+            'Comment must include the [Attachment] label.'
         );
     }
 
@@ -244,8 +253,11 @@ class MessageImporterIntegrationTest extends TestCase {
         $this->importer->import( 'rid_001', $this->post_id, 0 );
 
         $comments = $this->get_test_comments();
-        $this->assertCount( 2, $comments, 'All paginated messages must be imported.' );
+        // One consolidated log comment, not one per message.
+        $this->assertCount( 1, $comments, 'All paginated messages must be imported.' );
         $this->assertSame( 2, $call_count, 'get_messages() must be called for each page.' );
+        $this->assertStringContainsString( 'Page one message', $comments[0]->comment_content );
+        $this->assertStringContainsString( 'Page two message', $comments[0]->comment_content );
     }
 
 // Error propagation
