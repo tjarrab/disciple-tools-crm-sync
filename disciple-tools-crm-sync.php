@@ -90,6 +90,54 @@ function dt_crm_sync_load_puc(): void {
 }
 add_action( 'plugins_loaded', 'dt_crm_sync_load_puc' );
 
+/**
+ * Ensure the plugin's custom DB tables exist.
+ *
+ * Called on every plugins_loaded so a git-deployed update creates the tables
+ * without requiring a manual deactivate/reactivate cycle. dbDelta is idempotent
+ * and only alters the schema when something is missing, so the overhead on
+ * repeat requests is negligible.
+ *
+ * A simple option flag prevents the full dbDelta path on every normal request —
+ * it's cleared whenever the plugin version changes so new schema additions are
+ * picked up automatically.
+ */
+function dt_crm_sync_maybe_create_tables(): void {
+    if ( (string) get_option( 'dt_crm_sync_schema_version' ) === DT_CRM_SYNC_VERSION ) {
+        return;
+    }
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+    global $wpdb;
+    $charset = $wpdb->get_charset_collate();
+
+    $logs_table = $wpdb->prefix . 'dt_crm_sync_logs';
+    $logs_sql   = "CREATE TABLE $logs_table (
+        id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+        created_at    DATETIME        NOT NULL,
+        trigger_type  VARCHAR(20)     NOT NULL DEFAULT '',
+        respond_id    VARCHAR(64)     NOT NULL DEFAULT '',
+        dt_post_id    BIGINT UNSIGNED          DEFAULT NULL,
+        status        VARCHAR(20)     NOT NULL DEFAULT '',
+        message       TEXT            NOT NULL DEFAULT '',
+        PRIMARY KEY  (id),
+        KEY idx_status      (status),
+        KEY idx_respond_id  (respond_id),
+        KEY idx_created_at  (created_at)
+    ) $charset;";
+
+    dbDelta( $logs_sql );
+
+    if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Logger' ) ) {
+        require_once DT_CRM_SYNC_PATH . 'translation/class-translation-logger.php';
+    }
+    Disciple_Tools_CRM_Sync_Translation_Logger::create_table();
+
+    update_option( 'dt_crm_sync_schema_version', DT_CRM_SYNC_VERSION );
+}
+add_action( 'plugins_loaded', 'dt_crm_sync_maybe_create_tables', 20 );
+
 // Bootstrap
 
 add_action( 'after_setup_theme', 'dt_crm_sync_plugin_bootstrap', 20 );

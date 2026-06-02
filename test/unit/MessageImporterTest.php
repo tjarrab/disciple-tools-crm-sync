@@ -301,7 +301,11 @@ class MessageImporterTest extends BrainMonkeyTestCase {
 
     public function test_import_appends_translation_when_different_from_original(): void {
         $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
-        $translation_service->method( 'translate' )->willReturn( 'Hello, how are you?' );
+        $translation_service->method( 'translate_batch' )->willReturnCallback(
+            function ( array $texts ) {
+                return array_map( fn() => 'Hello, how are you?', $texts );
+            }
+        );
 
         $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
             $this->connector,
@@ -335,7 +339,11 @@ class MessageImporterTest extends BrainMonkeyTestCase {
 
     public function test_import_skips_translation_suffix_when_same_as_original(): void {
         $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
-        $translation_service->method( 'translate' )->willReturn( 'Hello world' );
+        $translation_service->method( 'translate_batch' )->willReturnCallback(
+            function ( array $texts ) {
+                return $texts; // return originals unchanged
+            }
+        );
 
         $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
             $this->connector,

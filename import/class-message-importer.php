@@ -114,13 +114,6 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
 
                     $content = wp_kses_post( $msg['message']['text'] ?? '' );
 
-                    if ( null !== $this->translation_service && '' !== $content ) {
-                        $translated = $this->translation_service->translate( $content, $respond_id );
-                        if ( $translated !== $content ) {
-                            $content .= ' [Translation: ' . sanitize_text_field( $translated ) . ']';
-                        }
-                    }
-
                     // Attachment sideloading: triggered when message type is 'attachment'.
                     $msg_type  = $msg['message']['type'] ?? '';
                     $media_url = 'attachment' === $msg_type ? ( $msg['message']['url'] ?? '' ) : '';
@@ -148,6 +141,26 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                     ];
                 }
             } while ( ! empty( $cursor_id ) );
+
+            // Second pass — translate all collected messages in a single provider call.
+            // Only runs when a translation service is configured and there is text to send.
+            if ( null !== $this->translation_service && ! empty( $collected ) ) {
+                $translatable = [];
+                foreach ( $collected as $i => $entry ) {
+                    if ( '' !== $entry['content'] && '[Message]' !== $entry['content'] ) {
+                        $translatable[ $i ] = $entry['content'];
+                    }
+                }
+
+                if ( ! empty( $translatable ) ) {
+                    $translations = $this->translation_service->translate_batch( $translatable, $respond_id );
+                    foreach ( $translations as $i => $translated ) {
+                        if ( $translated !== $collected[ $i ]['content'] ) {
+                            $collected[ $i ]['content'] .= ' [Translation: ' . sanitize_text_field( $translated ) . ']';
+                        }
+                    }
+                }
+            }
 
             if ( empty( $collected ) ) {
                 return null;

@@ -60,5 +60,29 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Translation_Provider' ) )
          * @return array{ translation: string, http_status: int, response_preview: string }|WP_Error
          */
         abstract public function translate_with_meta( string $text, string $prompt ): array|WP_Error;
+
+        /**
+         * Translate an array of texts in a single provider call.
+         *
+         * Returns an array of translated strings in the same order as $texts.
+         * Any text that couldn't be translated is left as-is so the caller always
+         * gets back an array of the same length.
+         *
+         * This default implementation calls translate_with_meta() once per text
+         * and is suitable as a fallback for providers that haven't overridden it.
+         * Concrete providers should override this to send a single batched request.
+         *
+         * @param array<int, string> $texts  Indexed array of message texts.
+         * @param string             $prompt The instruction prepended to each text.
+         * @return array<int, string>|WP_Error
+         */
+        public function translate_batch( array $texts, string $prompt ): array|WP_Error {
+            $results = [];
+            foreach ( $texts as $i => $text ) {
+                $result = $this->translate_with_meta( $text, $prompt );
+                $results[ $i ] = is_wp_error( $result ) ? $text : $result['translation'];
+            }
+            return $results;
+        }
     }
 }

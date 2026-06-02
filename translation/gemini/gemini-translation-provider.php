@@ -166,5 +166,85 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
                 'response_preview' => $response_preview,
             ];
         }
+
+        /**
+         * Translate multiple texts in a single Gemini API call.
+         *
+         * Encodes all texts as a JSON array and asks Gemini to return a JSON array
+         * of the same length in the same order. If the response can't be decoded as
+         * a matching array (Gemini occasionally wraps JSON in markdown fences or
+         * returns fewer items than expected), the method falls back to the parent's
+         * one-call-per-text loop so no messages are silently dropped.
+         *
+         * @param array<int, string> $texts  Indexed array of message texts.
+         * @param string             $prompt The instruction prepended to the request.
+         * @return array<int, string>|WP_Error
+         */
+        public function translate_batch( array $texts, string $prompt ): array|WP_Error {
+            if ( empty( $texts ) ) {
+                return [];
+            }
+
+            $batch_prompt = $prompt
+                . 'Translate each item in the following JSON array. '
+                . "Return ONLY a valid JSON array of translated strings in exactly the same order, with no extra text:\n"
+                . wp_json_encode( array_values( $texts ) );
+
+            $url  = add_query_arg( 'key', $this->api_key, self::API_BASE . '/' . $this->model . ':generateContent' );
+            $body = wp_json_encode( [
+                'contents' => [
+                    [
+                        'parts' => [
+                            [ 'text' => $batch_prompt ],
+                        ],
+                    ],
+                ],
+            ] );
+
+            $response = wp_safe_remote_post( $url, [
+                'timeout' => self::REQUEST_TIMEOUT,
+                'headers' => [ 'Content-Type' => 'application/json' ],
+                'body'    => $body,
+            ] );
+
+            if ( is_wp_error( $response ) ) {
+                return $response;
+            }
+
+            $http_status = (int) wp_remote_retrieve_response_code( $response );
+            $raw_body    = wp_remote_retrieve_body( $response );
+            $data        = json_decode( $raw_body, true );
+
+            if ( $http_status < 200 || $http_status >= 300 ) {
+                $error_msg = $data['error']['message'] ?? "HTTP $http_status";
+                return new WP_Error(
+                    'gemini_batch_error',
+                    $error_msg,
+                    [ 'http_status' => $http_status, 'response_preview' => substr( $raw_body, 0, 20 ) ]
+                );
+            }
+
+            $raw_translation = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+
+            // Strip markdown fences that Gemini sometimes wraps around JSON output.
+            $clean = preg_replace( '/^```(?:json)?\s*/i', '', trim( $raw_translation ) );
+            $clean = preg_replace( '/\s*```$/i', '', $clean );
+
+            $translated = json_decode( trim( $clean ), true );
+
+            // If Gemini didn't return a matching array, fall back to individual calls.
+            if ( ! is_array( $translated ) || count( $translated ) !== count( $texts ) ) {
+                return parent::translate_batch( $texts, $prompt );
+            }
+
+            // Re-key the result to match the original $texts keys.
+            $keys    = array_keys( $texts );
+            $results = [];
+            foreach ( $keys as $position => $original_key ) {
+                $results[ $original_key ] = (string) ( $translated[ $position ] ?? $texts[ $original_key ] );
+            }
+
+            return $results;
+        }
     }
 }

@@ -75,5 +75,97 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
 
             return $result['translation'];
         }
+
+        /**
+         * Translate a batch of messages in a single provider call.
+         *
+         * Handles rate limiting across the whole batch: if the daily cap would be
+         * exceeded mid-batch, only as many texts as the remaining allowance are
+         * sent — the rest come back as originals. One log entry is written per
+         * contact regardless of how many messages were in the batch.
+         *
+         * Returns an array indexed the same way as $texts so the caller can apply
+         * translations by key without tracking positions.
+         *
+         * @param array<int, string> $texts      Indexed array of message texts to translate.
+         * @param string             $respond_id Respond.io contact ID (used for logging only).
+         * @return array<int, string> Translated strings, or originals on any failure.
+         */
+        public function translate_batch( array $texts, string $respond_id ): array {
+            if ( empty( $texts ) ) {
+                return [];
+            }
+
+            $remaining = $this->rate_limiter->get_remaining( $this->daily_limit );
+
+            if ( 0 === $remaining ) {
+                Disciple_Tools_CRM_Sync_Translation_Logger::write(
+                    $respond_id,
+                    null,
+                    null,
+                    'rate_limited',
+                    'Daily translation limit reached — batch of ' . count( $texts ) . ' messages skipped.'
+                );
+                return $texts;
+            }
+
+            // Determine how many we can actually send this call.
+            $all_keys      = array_keys( $texts );
+            $translate_keys = array_slice( $all_keys, 0, $remaining );
+            $skipped_keys   = array_slice( $all_keys, $remaining );
+
+            $batch = array_intersect_key( $texts, array_flip( $translate_keys ) );
+
+            $result = $this->provider->translate_batch( $batch, $this->prompt );
+
+            if ( is_wp_error( $result ) ) {
+                $error_data = $result->get_error_data();
+                Disciple_Tools_CRM_Sync_Translation_Logger::write(
+                    $respond_id,
+                    is_array( $error_data ) ? ( $error_data['http_status'] ?? null ) : null,
+                    is_array( $error_data ) ? ( $error_data['response_preview'] ?? null ) : null,
+                    'failed',
+                    $result->get_error_message()
+                );
+                return $texts;
+            }
+
+            $this->rate_limiter->increment( count( $translate_keys ) );
+
+            $translated_count = count( $translate_keys );
+            $total_count      = count( $texts );
+
+            if ( count( $skipped_keys ) > 0 ) {
+                $detail = sprintf(
+                    '%d of %d messages translated — daily limit reached mid-batch.',
+                    $translated_count,
+                    $total_count
+                );
+                $status = 'partial';
+            } else {
+                $detail = $translated_count . ' messages translated.';
+                $status = 'success';
+            }
+
+            // Pick http_status from the result array if the provider added it, otherwise null.
+            $http_status      = null;
+            $response_preview = null;
+
+            Disciple_Tools_CRM_Sync_Translation_Logger::write(
+                $respond_id,
+                $http_status,
+                $response_preview,
+                $status,
+                $detail
+            );
+
+            // Merge: translated keys get provider result, skipped keys keep the original.
+            $output = $texts;
+            foreach ( $result as $key => $translated ) {
+                $output[ $key ] = $translated;
+            }
+
+            return $output;
+        }
     }
 }

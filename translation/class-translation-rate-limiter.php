@@ -55,12 +55,36 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Rate_Limiter' ) ) {
         }
 
         /**
-         * Increment the translation count for the current window
+         * Increment the translation count for the current window.
+         *
+         * Pass a value greater than 1 to record a batch of translations in a
+         * single call — keeps the count meaningful when we send multiple texts
+         * to the provider at once.
+         *
+         * @param int $by Number of translations to add. Defaults to 1.
          */
-        public function increment(): void {
+        public function increment( int $by = 1 ): void {
             $this->maybe_reset_window();
-            $this->state['count']++;
+            $this->state['count'] += max( 1, $by );
             $this->save();
+        }
+
+        /**
+         * Return how many translations can still be sent before hitting the daily cap.
+         *
+         * Returns PHP_INT_MAX when $limit is 0 (unlimited), so callers can always
+         * compare the result against their batch size without special-casing the
+         * unlimited branch.
+         *
+         * @param int $limit The configured daily cap. 0 = unlimited.
+         * @return int
+         */
+        public function get_remaining( int $limit ): int {
+            if ( 0 === $limit ) {
+                return PHP_INT_MAX;
+            }
+            $this->maybe_reset_window();
+            return max( 0, $limit - $this->state['count'] );
         }
 
         /**
