@@ -83,6 +83,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
 
             $ids          = array_values( array_filter( $args['ids'] ?? [], 'is_scalar' ) );
             $trigger_type = sanitize_key( $args['_trigger'] ?? 'manual' );
+            $skip_existing = (bool) ( $args['_skip_existing'] ?? true );
 
             if ( empty( $ids ) ) {
                 return;
@@ -114,6 +115,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                         $translation_settings['prompt'] ?? '',
                         absint( $translation_settings['daily_limit'] ?? 0 )
                     );
+                } else {
+                    // Key is present in settings but OpenSSL could not decrypt it — the
+                    // encryption key was likely regenerated. Admin must re-enter and save.
+                    Disciple_Tools_CRM_Sync_Logger::write(
+                        $trigger_type, 'batch', null, 'failed',
+                        'Translation skipped — API key could not be decrypted. Re-enter and save the key on the Translation tab.'
+                    );
                 }
             }
 
@@ -130,7 +138,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 $respond_id = (string) $respond_id;
                 ++$processed_count;
 
-                $result = $this->process_single_contact( $respond_id, $trigger_type );
+                $result = $this->process_single_contact( $respond_id, $trigger_type, $skip_existing );
 
                 if ( is_null( $result ) ) {
                     // Success or intentional skip — continue to next contact.
@@ -184,21 +192,44 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
          * Returns null on success or intentional skip, WP_Error on failure or
          * 429/449 (caller reschedules the remaining batch).
          *
+         * @param string $respond_id    The Respond.io contact ID.
+         * @param string $trigger_type  'scheduled', 'manual', or 'webhook'.
+         * @param bool   $skip_existing When true, contacts already in DT are skipped.
          * @return WP_Error|null
          */
         protected function process_single_contact(
             string $respond_id,
-            string $trigger_type
+            string $trigger_type,
+            bool $skip_existing = true
         ): WP_Error|null {
             try {
                 // Check by connector ID meta first — fastest path.
                 $dt_post_id = $this->matcher->find_by_connector_id( $respond_id );
                 $action     = $dt_post_id ? 'update' : 'create';
 
+                // Skip existing contacts before making any API calls so that large
+                // scheduled runs don't waste API quota re-importing contacts that
+                // are already up to date.
+                if ( $skip_existing && 'update' === $action ) {
+                    Disciple_Tools_CRM_Sync_Logger::write(
+                        $trigger_type, $respond_id, $dt_post_id, 'skipped', 'skip_existing'
+                    );
+                    return null;
+                }
+
                 $profile = $this->connector->get_contact( $respond_id );
                 if ( is_wp_error( $profile ) ) {
                     return $profile;
                 }
+
+                // Fetch the social platform channels for this contact. We use the
+                // result to tag the DT source with the originating platform(s)
+                // (e.g. facebook, tiktok) in addition to the connector-level source.
+                $channels = $this->connector->get_contact_channels( $respond_id );
+                if ( is_wp_error( $channels ) ) {
+                    return $channels;
+                }
+
                 $phone = sanitize_text_field( $profile['phone'] ?? '' );
 
                 // Fall back to phone/email lookup if meta hasn't been written yet.
@@ -230,6 +261,15 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                     $this->mapper->map_core_fields( $profile, 'create' === $action ),
                     $this->mapper->map_custom_fields( $profile )
                 );
+
+                // Append platform-level source tags (e.g. facebook, tiktok) to the
+                // connector-level source already set by map_core_fields(). DT's
+                // multiselect field appends values, so this is safe on re-sync.
+                $platform_sources = $this->mapper->map_platform_sources( $channels );
+                if ( ! empty( $platform_sources['values'] ) ) {
+                    $existing = $fields['sources']['values'] ?? [];
+                    $fields['sources']['values'] = array_merge( $existing, $platform_sources['values'] );
+                }
 
                 if ( 'create' === $action ) {
                     $result = DT_Posts::create_post( 'contacts', $fields, true, false );
@@ -268,7 +308,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 }
 
                 // Import message history.
-                $msg_error = $this->message_importer->import( $respond_id, $dt_post_id );
+                $msg_target = $this->mapper->get_message_history_target();
+                $msg_error  = $this->message_importer->import( $respond_id, $dt_post_id, 0, $msg_target );
                 if ( is_wp_error( $msg_error ) ) {
                     // Propagate 429 / 449 for batch rescheduling.
                     return $msg_error;

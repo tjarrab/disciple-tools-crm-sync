@@ -148,3 +148,27 @@ if ( ! function_exists( '_set_cron_array' ) ) {
 if ( ! function_exists( '_n' ) ) {
     function _n( string $single, string $plural, int $number, string $domain = 'default' ): string { return 1 === $number ? $single : $plural; } // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedFunctionFound
 }
+if ( ! defined( 'OBJECT' ) ) {
+    define( 'OBJECT', 'OBJECT' );
+}
+if ( ! function_exists( 'get_comment' ) ) {
+    function get_comment( $id, $output = OBJECT, $filter = 'raw' ): mixed { return null; } // phpcs:ignore
+}
+if ( ! function_exists( 'wp_update_comment' ) ) {
+    function wp_update_comment( array $commentarr, bool $wp_error = false ): int|bool|\WP_Error { return 1; } // phpcs:ignore
+}
+if ( ! function_exists( 'get_post_meta' ) ) {
+    function get_post_meta( $post_id, string $key = '', bool $single = false ): mixed { return $single ? '' : []; } // phpcs:ignore
+}
+if ( ! function_exists( 'update_post_meta' ) ) {
+    function update_post_meta( $post_id, string $meta_key, mixed $meta_value, mixed $prev_value = '' ): int|bool { return true; } // phpcs:ignore
+}
+if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+    function wp_strip_all_tags( string $text, bool $remove_breaks = false ): string { // phpcs:ignore
+        $text = strip_tags( $text );
+        if ( $remove_breaks ) {
+            $text = (string) preg_replace( '/[\r\n\t ]+/', ' ', $text );
+        }
+        return trim( $text );
+    }
+}

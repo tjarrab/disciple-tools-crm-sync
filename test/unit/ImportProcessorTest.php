@@ -49,14 +49,19 @@ class TestableProcessor extends Disciple_Tools_CRM_Sync_Processor {
         $this->message_importer = $message_importer;
     }
 
+    /** Expose the message importer that process_batch() built, so tests can inspect its wiring. */
+    public function get_message_importer(): ?Disciple_Tools_CRM_Sync_Message_Importer {
+        return $this->message_importer;
+    }
+
     /** Expose sideload() via the sideloader within the message importer for direct testing. */
     public function expose_sideload_attachment( string $url, int $post_id ): string {
         return ( new Disciple_Tools_CRM_Sync_Media_Sideloader() )->sideload( $url, $post_id );
     }
 
     /** Expose process_single_contact() as public for direct testing. */
-    public function expose_process_single_contact( string $respond_id, string $trigger_type ): WP_Error|null {
-        return $this->process_single_contact( $respond_id, $trigger_type );
+    public function expose_process_single_contact( string $respond_id, string $trigger_type, bool $skip_existing = true ): WP_Error|null {
+        return $this->process_single_contact( $respond_id, $trigger_type, $skip_existing );
     }
 
     /**
@@ -67,11 +72,11 @@ class TestableProcessor extends Disciple_Tools_CRM_Sync_Processor {
      */
     public $process_single_contact_fn = null;
 
-    protected function process_single_contact( string $respond_id, string $trigger_type ): WP_Error|null {
+    protected function process_single_contact( string $respond_id, string $trigger_type, bool $skip_existing = true ): WP_Error|null {
         if ( null !== $this->process_single_contact_fn ) {
             return ( $this->process_single_contact_fn )( $respond_id, $trigger_type );
         }
-        return parent::process_single_contact( $respond_id, $trigger_type );
+        return parent::process_single_contact( $respond_id, $trigger_type, $skip_existing );
     }
 }
 
@@ -351,5 +356,92 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
 
         $this->assertInstanceOf( WP_Error::class, $result );
         $this->assertSame( 'dt_write_failed', $result->get_error_code() );
+    }
+
+// Translation service wiring
+
+    public function test_process_batch_logs_failure_when_decrypt_fails(): void {
+        // decrypt_value() returns false by default (test stub, $test_decrypt_fn = null).
+        // Settings look fully configured, but the key can't be decrypted — silently broken
+        // before this fix. Verify the import log now contains a 'failed' row.
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) {
+            if ( 'dt_crm_sync_settings' === $key ) {
+                return [
+                    'active_connector' => 'respond_io',
+                    'connectors'       => [ 'respond_io' => [ 'api_url' => 'https://api.test', 'api_token' => 'tok' ] ],
+                ];
+            }
+            if ( 'dt_crm_sync_translation_settings' === $key ) {
+                return [ 'enabled' => true, 'api_key' => 'encrypted_blob', 'model' => 'gemini-pro', 'daily_limit' => 100 ];
+            }
+            return $default;
+        } );
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_connectors' === $hook
+                ? [ 'respond_io' => 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ]
+                : $value
+        );
+        Functions\when( 'wp_schedule_single_event' )->justReturn( false );
+
+        $processor = new TestableProcessor();
+        $processor->process_single_contact_fn = fn( string $id, string $trigger ): ?WP_Error => null;
+        $processor->process_batch( [ 'ids' => [ '1' ], '_trigger' => 'manual' ] );
+
+        global $wpdb;
+        $decrypt_failure_logged = false;
+        foreach ( $wpdb->insert_calls as $call ) {
+            if (
+                'wp_dt_crm_sync_logs' === $call['table'] &&
+                'failed' === ( $call['data']['status'] ?? '' ) &&
+                str_contains( $call['data']['message'] ?? '', 'decrypted' )
+            ) {
+                $decrypt_failure_logged = true;
+                break;
+            }
+        }
+
+        $this->assertTrue(
+            $decrypt_failure_logged,
+            'Expected a failed log entry when the translation API key cannot be decrypted.'
+        );
+    }
+
+    public function test_process_batch_creates_translation_service_when_settings_correct(): void {
+        // When all settings are valid and the key decrypts, the message importer must
+        // receive a non-null translation service so translate() actually runs.
+        Disciple_Tools_CRM_Sync::$test_decrypt_fn = fn( string $v ): string => 'real_api_key';
+
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) {
+            if ( 'dt_crm_sync_settings' === $key ) {
+                return [
+                    'active_connector' => 'respond_io',
+                    'connectors'       => [ 'respond_io' => [ 'api_url' => 'https://api.test', 'api_token' => 'tok' ] ],
+                ];
+            }
+            if ( 'dt_crm_sync_translation_settings' === $key ) {
+                return [ 'enabled' => true, 'api_key' => 'encrypted_blob', 'model' => 'gemini-pro', 'daily_limit' => 100 ];
+            }
+            return $default;
+        } );
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_connectors' === $hook
+                ? [ 'respond_io' => 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ]
+                : $value
+        );
+        Functions\when( 'wp_schedule_single_event' )->justReturn( false );
+
+        $processor = new TestableProcessor();
+        $processor->process_single_contact_fn = fn( string $id, string $trigger ): ?WP_Error => null;
+        $processor->process_batch( [ 'ids' => [ '1' ], '_trigger' => 'manual' ] );
+
+        $importer = $processor->get_message_importer();
+        $this->assertNotNull( $importer, 'process_batch() must create a message importer.' );
+
+        $ref = new \ReflectionProperty( Disciple_Tools_CRM_Sync_Message_Importer::class, 'translation_service' );
+        $ref->setAccessible( true );
+        $this->assertNotNull(
+            $ref->getValue( $importer ),
+            'Message importer must be wired with a non-null translation service when settings are valid.'
+        );
     }
 }

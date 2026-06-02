@@ -5,7 +5,7 @@
  * Author:            tjarrab
  * Author URI:        https://github.com/tjarrab
  * Description:       Imports and syncs contacts from CRM platforms into Disciple.Tools, with message history, webhook automation, and scheduled polling.
- * Version:           1.0.2
+ * Version:           1.0.3
  * Text Domain:       disciple-tools-crm-sync
  * Domain Path:       /languages
  * GitHub Plugin URI: https://github.com/tjarrab/disciple-tools-crm-sync
@@ -29,7 +29,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'DT_CRM_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DT_CRM_SYNC_URL', plugin_dir_url( __FILE__ ) );
-define( 'DT_CRM_SYNC_VERSION', '1.0.2' );
+define( 'DT_CRM_SYNC_VERSION', '1.0.3' );
 
 // Configuration (repo-specific values — edit config.php before release)
 require_once plugin_dir_path( __FILE__ ) . 'config.php';
@@ -368,6 +368,17 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
                     'label' => $instance->get_dt_source_label(),
                     ];
                 }
+
+                // Register platform-level source labels so the DT Sources dropdown
+                // shows clean names (e.g. "Facebook") before any contact is imported.
+                foreach ( $instance->get_platform_source_labels() as $platform_slug => $platform_label ) {
+                    $platform_slug = sanitize_key( $platform_slug );
+                    if ( ! empty( $platform_slug ) && ! isset( $fields['sources']['default'][ $platform_slug ] ) ) {
+                        $fields['sources']['default'][ $platform_slug ] = [
+                            'label' => sanitize_text_field( $platform_label ),
+                        ];
+                    }
+                }
             }
             return $fields;
         }
@@ -386,9 +397,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
          * @param array  $filter_params   Generic filter parameters from the connector's get_filter_fields() slugs.
          * @param string $poll_time       For 'daily' interval: time-of-day in HH:MM (site timezone). Default '00:00'.
          * @param string $connector_slug  Slug of the connector that owns this filter. Defaults to active_connector.
+         * @param bool   $skip_existing   When true, the import processor skips contacts that already exist in DT. Default true.
          * @return string The generated filter ID.
          */
-        public static function create_filter( string $name, string $interval, array $filter_params = [], string $poll_time = '00:00', string $connector_slug = '' ): string {
+        public static function create_filter( string $name, string $interval, array $filter_params = [], string $poll_time = '00:00', string $connector_slug = '', bool $skip_existing = true ): string {
             if ( empty( $connector_slug ) ) {
                 $settings       = get_option( 'dt_crm_sync_settings', [] );
                 $connector_slug = is_array( $settings ) ? ( $settings['active_connector'] ?? '' ) : '';
@@ -403,6 +415,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             'poll_time'      => $poll_time,
             'connector_slug' => $connector_slug,
             'filter_params'  => $filter_params,
+            'skip_existing'  => $skip_existing,
             ];
 
             update_option( 'dt_crm_sync_saved_filter_' . $filter_id, wp_json_encode( $envelope ) );

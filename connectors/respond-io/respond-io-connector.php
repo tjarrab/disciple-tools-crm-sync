@@ -98,6 +98,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'label'           => __( 'Tag', 'disciple-tools-crm-sync' ),
                     'type'            => 'text',
                     'exclusive_group' => 'contact_filter',
+                    'group_label'     => __( 'Contact Filter', 'disciple-tools-crm-sync' ),
                 ],
                 [
                     'slug'            => 'lifecycle',
@@ -236,6 +237,49 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                 return $client;
             }
             return $client->get_message_list( $contact_id, $cursor, $limit );
+        }
+
+        /**
+         * Fetches the social media channels connected to a contact.
+         * Delegates to the API client's channel endpoint.
+         *
+         * @param string $contact_id Respond.io contact ID.
+         * @return array|\WP_Error Normalised: { data: [ { source: string, ... }, ... ] }
+         */
+        public function get_contact_channels( string $contact_id ): array|\WP_Error {
+            $client = $this->get_client();
+            if ( is_wp_error( $client ) ) {
+                return $client;
+            }
+            return $client->get_contact_channels( $contact_id );
+        }
+
+        /**
+         * Returns the map of Respond.io channel source slugs to display labels.
+         *
+         * These are registered as DT contact source options so the Sources dropdown
+         * in the DT admin shows readable names. Any slug not listed here falls back
+         * to a generic ucwords() transform at registration time.
+         *
+         * @return array<string, string>
+         */
+        public function get_platform_source_labels(): array {
+            return [
+                'facebook'    => 'Facebook',
+                'instagram'   => 'Instagram',
+                'tiktok'      => 'TikTok',
+                'whatsapp'    => 'WhatsApp',
+                'telegram'    => 'Telegram',
+                'line'        => 'LINE',
+                'viber'       => 'Viber',
+                'wechat'      => 'WeChat',
+                'twitter'     => 'Twitter / X',
+                'sms'         => 'SMS',
+                'email'       => 'Email',
+                'webchat'     => 'Webchat',
+                'gb_messages' => 'Google Business Messages',
+                'youtube'     => 'YouTube',
+            ];
         }
 
         /**

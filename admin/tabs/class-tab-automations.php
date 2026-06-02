@@ -69,7 +69,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                             }
                         }
                     }
-                    $filter_id = Disciple_Tools_CRM_Sync::create_filter( $name, $interval, $filter_params, $poll_time );
+                    $skip_existing = isset( $_POST['skip_existing'] );
+                    $filter_id = Disciple_Tools_CRM_Sync::create_filter( $name, $interval, $filter_params, $poll_time, '', $skip_existing );
                     $notice    = 'filter_created';
                 }
             } elseif ( isset( $_POST['dt_crm_sync_delete_nonce'] ) ) {
@@ -150,6 +151,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                             <th><?php esc_html_e( 'Name', 'disciple-tools-crm-sync' ); ?></th>
                             <th><?php esc_html_e( 'Interval', 'disciple-tools-crm-sync' ); ?></th>
                             <th><?php esc_html_e( 'Next Run', 'disciple-tools-crm-sync' ); ?></th>
+                            <th><?php esc_html_e( 'Skip Existing', 'disciple-tools-crm-sync' ); ?></th>
                             <th><?php esc_html_e( 'Actions', 'disciple-tools-crm-sync' ); ?></th>
                         </tr>
                     </thead>
@@ -167,9 +169,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                 }
                                 continue;
                             }
-                            $name = $envelope['name'] ?? $fid;
-                            $interval = $envelope['interval'] ?? __( '—', 'disciple-tools-crm-sync' );
-                            $next_ts  = wp_next_scheduled( 'dt_crm_sync_poll', [ $fid ] )
+                            $name          = $envelope['name'] ?? $fid;
+                            $interval      = $envelope['interval'] ?? __( '—', 'disciple-tools-crm-sync' );
+                            $skip_existing = $envelope['skip_existing'] ?? true;
+                            $next_ts       = wp_next_scheduled( 'dt_crm_sync_poll', [ $fid ] )
                                     ?: wp_next_scheduled( 'dt_crm_sync_poll_' . $fid ); // legacy fallback
                             ?>
                             <tr>
@@ -181,6 +184,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                     <?php else : ?>
                                         <em><?php esc_html_e( 'Not scheduled', 'disciple-tools-crm-sync' ); ?></em>
                                     <?php endif; ?>
+                                </td>
+                                <td>
+                                    <?php echo $skip_existing ? esc_html__( 'Yes', 'disciple-tools-crm-sync' ) : esc_html__( 'No', 'disciple-tools-crm-sync' ); ?>
                                 </td>
                                 <td style="white-space: nowrap;">
                                     <button type="button"
@@ -237,32 +243,94 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                     </tr>
                     <?php
                     // Dynamic filter fields from the active connector.
+                    // Fields that share an exclusive_group are collapsed into a single
+                    // table row so the UI can show an "or" separator between them.
                     $form_connector     = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
                     $form_filter_fields = $form_connector ? $form_connector->get_filter_fields() : [];
-                    foreach ( $form_filter_fields as $ff ) :
-                        $ff_slug  = sanitize_key( $ff['slug'] ?? '' );
-                        $ff_label = $ff['label'] ?? $ff_slug;
-                        $ff_desc  = $ff['description'] ?? '';
-                        $ff_group = sanitize_key( $ff['exclusive_group'] ?? '' );
-                        if ( ! $ff_slug ) { continue; }
-                        ?>
-                        <tr>
-                            <th scope="row">
-                                <label for="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>">
-                                    <?php echo esc_html( $ff_label ); ?>
-                                </label>
-                            </th>
-                            <td>
-                                <input type="text"
-                                        id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
-                                        name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
-                                        class="regular-text"
-                                        <?php if ( $ff_group ) : ?>data-exclusive-group="<?php echo esc_attr( $ff_group ); ?>"<?php endif; ?>>
-                                <?php if ( $ff_desc ) : ?>
-                                    <p class="description"><?php echo esc_html( $ff_desc ); ?></p>
-                                <?php endif; ?>
-                            </td>
-                        </tr>
+
+                    $render_items  = [];
+                    $seen_groups   = [];
+                    foreach ( $form_filter_fields as $ff ) {
+                        $slug  = sanitize_key( $ff['slug'] ?? '' );
+                        $group = sanitize_key( $ff['exclusive_group'] ?? '' );
+                        if ( ! $slug ) { continue; }
+                        if ( $group ) {
+                            if ( ! isset( $seen_groups[ $group ] ) ) {
+                                $seen_groups[ $group ] = count( $render_items );
+                                $render_items[]        = [
+                                    'type'   => 'group',
+                                    'label'  => $ff['group_label'] ?? $group,
+                                    'group'  => $group,
+                                    'fields' => [],
+                                ];
+                            }
+                            $render_items[ $seen_groups[ $group ] ]['fields'][] = $ff;
+                        } else {
+                            $render_items[] = [ 'type' => 'standalone', 'field' => $ff ];
+                        }
+                    }
+
+                    foreach ( $render_items as $item ) :
+                        if ( 'standalone' === $item['type'] ) :
+                            $ff       = $item['field'];
+                            $ff_slug  = sanitize_key( $ff['slug'] );
+                            $ff_label = $ff['label'] ?? $ff_slug;
+                            $ff_desc  = $ff['description'] ?? '';
+                            ?>
+                            <tr>
+                                <th scope="row">
+                                    <label for="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>">
+                                        <?php echo esc_html( $ff_label ); ?>
+                                    </label>
+                                </th>
+                                <td>
+                                    <input type="text"
+                                            id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
+                                            name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
+                                            class="regular-text">
+                                    <?php if ( $ff_desc ) : ?>
+                                        <p class="description"><?php echo esc_html( $ff_desc ); ?></p>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php else : // group ?>
+                            <tr>
+                                <th scope="row">
+                                    <?php echo esc_html( $item['label'] ); ?>
+                                </th>
+                                <td>
+                                    <div class="dt-crm-filter-group">
+                                        <?php
+                                        $group_slug   = $item['group'];
+                                        $group_fields = $item['fields'];
+                                        $last_index   = count( $group_fields ) - 1;
+                                        foreach ( $group_fields as $idx => $ff ) :
+                                            $ff_slug = sanitize_key( $ff['slug'] );
+                                            $ff_desc = $ff['description'] ?? '';
+                                            ?>
+                                            <div class="dt-crm-filter-option">
+                                                <label for="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>">
+                                                    <?php echo esc_html( $ff['label'] ?? $ff_slug ); ?>
+                                                </label>
+                                                <input type="text"
+                                                        id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
+                                                        name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
+                                                        class="regular-text"
+                                                        data-exclusive-group="<?php echo esc_attr( $group_slug ); ?>">
+                                                <?php if ( $ff_desc ) : ?>
+                                                    <p class="description"><?php echo esc_html( $ff_desc ); ?></p>
+                                                <?php endif; ?>
+                                            </div>
+                                            <?php if ( $idx < $last_index ) : ?>
+                                                <span class="dt-crm-or-separator" aria-hidden="true">
+                                                    <?php esc_html_e( 'or', 'disciple-tools-crm-sync' ); ?>
+                                                </span>
+                                            <?php endif; ?>
+                                        <?php endforeach; ?>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
                     <?php endforeach; ?>
                     <tr>
                         <th scope="row">
@@ -296,8 +364,21 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                             </select>
                             <p class="description"><?php esc_html_e( 'Time to run the daily poll (site timezone).', 'disciple-tools-crm-sync' ); ?></p>
                         </td>
-                    </tr>
-                </table>
+                    </tr>                    <tr>
+                        <th scope="row">
+                            <label for="dt_rio_skip_existing">
+                                <?php esc_html_e( 'Do not update existing contacts', 'disciple-tools-crm-sync' ); ?>
+                            </label>
+                        </th>
+                        <td>
+                            <input type="checkbox"
+                                    id="dt_rio_skip_existing"
+                                    name="skip_existing"
+                                    value="1"
+                                    checked>
+                            <p class="description"><?php esc_html_e( 'When checked, contacts that are already in Disciple.Tools will be skipped. Only new contacts will be created.', 'disciple-tools-crm-sync' ); ?></p>
+                        </td>
+                    </tr>                </table>
 
                 <?php submit_button(
                     __( 'Add Filter', 'disciple-tools-crm-sync' ),

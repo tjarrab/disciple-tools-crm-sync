@@ -132,4 +132,36 @@ class FieldMapperTest extends BrainMonkeyTestCase {
             'textarea'     => [ 'textarea', 'Some notes here', 'Some notes here' ],
         ];
     }
+
+// get_message_history_target
+
+    public function test_get_message_history_target_returns_null_by_default(): void {
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        $this->assertNull( $this->mapper->get_message_history_target(), 'No mapping stored — should default to null (DT note).' );
+    }
+
+    public function test_get_message_history_target_returns_null_when_dt_note_set(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            '__respond_io_messages__' => [ 'dt_key' => '__dt_note__', 'dt_type' => 'text' ],
+        ] );
+
+        $this->assertNull( $this->mapper->get_message_history_target(), '__dt_note__ sentinel should resolve to null.' );
+    }
+
+    public function test_get_message_history_target_returns_skip_sentinel(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            '__respond_io_messages__' => [ 'dt_key' => '__skip__', 'dt_type' => 'text' ],
+        ] );
+
+        $this->assertSame( '__skip__', $this->mapper->get_message_history_target() );
+    }
+
+    public function test_get_message_history_target_returns_field_key_when_set(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            '__respond_io_messages__' => [ 'dt_key' => 'notes_for_dt', 'dt_type' => 'textarea' ],
+        ] );
+
+        $this->assertSame( 'notes_for_dt', $this->mapper->get_message_history_target() );
+    }
 }

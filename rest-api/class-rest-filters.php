@@ -154,7 +154,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Filters' ) ) {
                     'tag'    => sanitize_text_field( wp_unslash( $params['tag'] ?? '' ) ),
                 ];
 
-            $filter_id = Disciple_Tools_CRM_Sync::create_filter( $name, $interval, $filter_params, $poll_time );
+            $skip_existing = isset( $params['skip_existing'] ) ? (bool) $params['skip_existing'] : true;
+
+            $filter_id = Disciple_Tools_CRM_Sync::create_filter( $name, $interval, $filter_params, $poll_time, '', $skip_existing );
 
             return new WP_REST_Response( [ 'id' => $filter_id, 'status' => 'created' ], 201 );
         }

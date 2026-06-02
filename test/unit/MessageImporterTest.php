@@ -2,8 +2,9 @@
 /**
  * Unit tests for Disciple_Tools_CRM_Sync_Message_Importer.
  *
- * Covers empty list, deduplication, sender labeling, rate-limit error propagation,
- * and pagination cursor behavior.
+ * Covers: log upsert (create + update in place), both-sides conversation,
+ * sender labeling, placeholder fallbacks, field-target routing, skip sentinal,
+ * rate-limit error propagation, pagination, and translation service injection.
  */
 
 use Brain\Monkey\Functions;
@@ -24,6 +25,11 @@ class MessageImporterTest extends BrainMonkeyTestCase {
 
         $this->sideloader = $this->createMock( Disciple_Tools_CRM_Sync_Media_Sideloader::class );
         $this->importer   = new Disciple_Tools_CRM_Sync_Message_Importer( $this->connector, $this->sideloader );
+
+        // Default post-meta stubs: no existing note, writes succeed.
+        Functions\when( 'get_post_meta' )->justReturn( 0 );
+        Functions\when( 'update_post_meta' )->justReturn( true );
+        Functions\when( 'sanitize_text_field' )->returnArg();
     }
 
     public function test_import_null_empty_message_list(): void {
@@ -32,38 +38,41 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $result = $this->importer->import( 'rid_1', 10, 0 );
 
         $this->assertNull( $result );
+        $this->assertEmpty( DT_Posts::$add_comment_calls, 'No note should be created for an empty message list.' );
     }
 
     public function test_import_skips_message_without_id(): void {
         $this->connector->method( 'get_messages' )->willReturn( [
-            'data'   => [ [ 'messageId' => '', 'traffic' => 'incoming', 'message' => [ 'text' => 'hi' ] ] ],
+            'data'   => [ [ 'messageId' => '', 'traffic' => 'incoming', 'message' => [ 'text' => 'hi' ], 'status' => [ [ 'timestamp' => 0 ] ] ] ],
             'cursor' => [ 'next' => null ],
         ] );
-
-        // get_comments would not be called for a message with no ID.
-        Functions\expect( 'get_comments' )->never();
 
         $result = $this->importer->import( 'rid_1', 10, 0 );
 
         $this->assertNull( $result );
-        $this->assertEmpty( DT_Posts::$add_comment_calls, 'No comment should be added for a message without an ID.' );
+        $this->assertEmpty( DT_Posts::$add_comment_calls, 'No note should be created when the only message has no ID.' );
     }
 
-    public function test_import_skips_already_imported_message(): void {
+    // --- single-note creation (both sides) ---
+
+    public function test_import_creates_single_note_with_both_sides(): void {
         $this->connector->method( 'get_messages' )->willReturn( [
-            'data'   => [ [ 'messageId' => 'msg_42', 'traffic' => 'incoming', 'message' => [ 'text' => 'hi' ], 'status' => [ [ 'timestamp' => 0 ] ] ] ],
+            'data'   => [
+                [ 'messageId' => 'msg_in',  'traffic' => 'incoming', 'sender' => [ 'source' => 'contact' ], 'message' => [ 'text' => 'Hi there' ],  'status' => [ [ 'timestamp' => 100 ] ] ],
+                [ 'messageId' => 'msg_out', 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ],    'message' => [ 'text' => 'Hello back' ], 'status' => [ [ 'timestamp' => 200 ] ] ],
+            ],
             'cursor' => [ 'next' => null ],
         ] );
 
-        // Batch dedup query returns a row indicating msg_42 is already imported.
-        global $wpdb;
-        $wpdb->next_get_results_result = [ (object) [ 'meta_value' => 'msg_42' ] ];
+        $this->importer->import( 'rid_1', 10, 0 );
 
-        $result = $this->importer->import( 'rid_1', 10, 0 );
-
-        $this->assertNull( $result );
-        $this->assertEmpty( DT_Posts::$add_comment_calls, 'add_post_comment should not be called for already-imported message.' );
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertCount( 1, $calls, 'Exactly one conversation log note should be created.' );
+        $this->assertStringContainsString( 'Contact:', $calls[0]['content'], 'Log should include incoming message from Contact.' );
+        $this->assertStringContainsString( 'Agent:', $calls[0]['content'], 'Log should include outgoing message from Agent.' );
     }
+
+    // --- sender labels ---
 
     /**
      * @dataProvider senderLabelProvider
@@ -83,24 +92,181 @@ class MessageImporterTest extends BrainMonkeyTestCase {
             'cursor' => [ 'next' => null ],
         ] );
 
-        Functions\when( 'get_comments' )->justReturn( 0 );
-        Functions\when( 'sanitize_text_field' )->returnArg();
-
         $this->importer->import( 'rid_1', 10, 0 );
 
         $calls = DT_Posts::$add_comment_calls;
-        $this->assertNotEmpty( $calls, 'Expected add_post_comment to be called.' );
-        $this->assertSame( $expected_sender, $calls[0]['args']['comment_author'] );
+        $this->assertNotEmpty( $calls, 'Expected a conversation log note to be created.' );
+        $this->assertStringContainsString(
+            $expected_sender . ':',
+            $calls[0]['content'],
+            'The log note should contain the sender label.'
+        );
     }
 
     public static function senderLabelProvider(): array {
         return [
-            'internal note'  => [ [ 'traffic' => 'internal', 'sender' => [ 'source' => '' ] ], 'Internal Note' ],
-            'outgoing agent' => [ [ 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ] ], 'Agent' ],
+            'internal note'    => [ [ 'traffic' => 'internal', 'sender' => [ 'source' => '' ] ], 'Internal Note' ],
+            'outgoing agent'   => [ [ 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ] ], 'Agent' ],
             'incoming contact' => [ [ 'traffic' => 'incoming', 'sender' => [ 'source' => 'contact' ] ], 'Contact' ],
-            'unknown fallback'  => [ [ 'traffic' => '', 'sender' => [ 'source' => '' ] ], 'Respond.io' ],
+            'unknown fallback' => [ [ 'traffic' => '', 'sender' => [ 'source' => '' ] ], 'Respond.io' ],
         ];
     }
+
+    // --- content fallbacks ---
+
+    public function test_import_uses_message_placeholder_when_text_empty(): void {
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_empty',
+                'traffic'   => 'outgoing',
+                'sender'    => [ 'source' => 'user' ],
+                'message'   => [ 'text' => '', 'type' => 'template' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $this->assertStringContainsString( '[Message]', $calls[0]['content'] );
+    }
+
+    public function test_import_uses_attachment_label_when_type_is_attachment(): void {
+        $this->sideloader->method( 'sideload' )->willReturn( 'https://cdn.respond.io/file.pdf' );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_attach',
+                'traffic'   => 'outgoing',
+                'sender'    => [ 'source' => 'user' ],
+                'message'   => [ 'text' => '', 'type' => 'attachment', 'url' => 'https://cdn.respond.io/file.pdf', 'filename' => 'report.pdf' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $this->assertStringContainsString( '[Attachment: report.pdf]', $calls[0]['content'] );
+    }
+
+    // --- timestamp formatting ---
+
+    public function test_import_formats_utc_timestamp_in_log_line(): void {
+        $ts = 1748246400; // 2025-05-26 00:00:00 UTC
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_ts',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'hi' ],
+                'status'    => [ [ 'timestamp' => $ts ] ],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $this->assertStringContainsString(
+            gmdate( 'Y-m-d H:i', $ts ) . ' UTC',
+            $calls[0]['content'],
+            'Log line should include the UTC timestamp.'
+        );
+    }
+
+    public function test_import_sorts_messages_chronologically(): void {
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [ 'messageId' => 'msg_b', 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ],    'message' => [ 'text' => 'second' ], 'status' => [ [ 'timestamp' => 200 ] ] ],
+                [ 'messageId' => 'msg_a', 'traffic' => 'incoming', 'sender' => [ 'source' => 'contact' ], 'message' => [ 'text' => 'first' ],  'status' => [ [ 'timestamp' => 100 ] ] ],
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $pos_first  = strpos( $calls[0]['content'], 'first' );
+        $pos_second = strpos( $calls[0]['content'], 'second' );
+        $this->assertLessThan( $pos_second, $pos_first, 'Earlier timestamp must appear before later timestamp in the log.' );
+    }
+
+    // --- upsert behaviour ---
+
+    public function test_import_updates_existing_note_on_reimport(): void {
+        // Simulate an existing note comment ID stored in post meta.
+        Functions\when( 'get_post_meta' )->justReturn( 42 );
+        Functions\when( 'get_comment' )->justReturn( (object) [ 'comment_ID' => 42 ] );
+        Functions\expect( 'wp_update_comment' )->once()->andReturn( 1 );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_1',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'hi' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $this->assertEmpty( DT_Posts::$add_comment_calls, 'add_post_comment must not be called when wp_update_comment is used.' );
+    }
+
+    // --- target field routing ---
+
+    public function test_import_writes_to_dt_field_when_target_field_provided(): void {
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_1',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'field text' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0, 'notes_for_dt' );
+
+        $this->assertEmpty( DT_Posts::$add_comment_calls, 'add_post_comment must not be called when writing to a DT field.' );
+        $calls = DT_Posts::$update_post_calls;
+        $this->assertNotEmpty( $calls, 'update_post must be called when a target field is provided.' );
+        $this->assertArrayHasKey( 'notes_for_dt', $calls[0]['fields'], 'update_post must target the specified field key.' );
+        $this->assertStringContainsString( 'field text', $calls[0]['fields']['notes_for_dt'], 'Field value must include message content.' );
+    }
+
+    public function test_import_skips_when_target_is_skip(): void {
+        $this->connector->expects( $this->never() )->method( 'get_messages' );
+
+        $result = $this->importer->import( 'rid_1', 10, 0, '__skip__' );
+
+        $this->assertNull( $result );
+        $this->assertEmpty( DT_Posts::$add_comment_calls );
+        $this->assertEmpty( DT_Posts::$update_post_calls );
+    }
+
+    // --- error propagation ---
 
     public function test_import_propagates_rate_limit_error(): void {
         $error = new WP_Error( 'rate_limited', 'Too Many Requests', [ 'status' => 429 ] );
@@ -111,6 +277,8 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $this->assertInstanceOf( WP_Error::class, $result );
         $this->assertSame( 'rate_limited', $result->get_error_code() );
     }
+
+    // --- pagination ---
 
     public function test_import_follows_pagination_cursor(): void {
         $call_count = 0;
@@ -129,42 +297,6 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $this->assertSame( 2, $call_count, 'Should paginate twice: first page then cursor page.' );
     }
 
-    public function test_import_passes_local_time_for_comment_date_and_utc_for_comment_date_gmt(): void {
-        // Timestamp 1748246400 = 2025-05-26 00:00:00 UTC. Use a value > 0 so the
-        // production code takes the wp_date() / gmdate() branch, not the fallback.
-        $ts = 1748246400;
-
-        $this->connector->method( 'get_messages' )->willReturn( [
-            'data'   => [
-            [
-                'messageId' => 'msg_ts',
-                'traffic'   => 'incoming',
-                'message'   => [ 'text' => 'hi' ],
-                'status'    => [ [ 'timestamp' => $ts ] ],
-            ]
-            ],
-            'cursor' => [ 'next' => null ],
-        ] );
-
-        // Stub wp_date() to simulate a non-UTC local timezone (e.g. UTC+8).
-        Functions\when( 'wp_date' )->justReturn( '2025-05-26 08:00:00' );
-
-        $this->importer->import( 'rid_1', 10, 0 );
-
-        $calls = DT_Posts::$add_comment_calls;
-        $this->assertNotEmpty( $calls, 'Expected add_post_comment to be called.' );
-        $this->assertSame(
-            '2025-05-26 08:00:00',
-            $calls[0]['args']['comment_date'],
-            'comment_date must use wp_date() (local timezone).'
-        );
-        $this->assertSame(
-            gmdate( 'Y-m-d H:i:s', $ts ),
-            $calls[0]['args']['comment_date_gmt'],
-            'comment_date_gmt must use gmdate() (UTC).'
-        );
-    }
-
     // --- translation service injection ---
 
     public function test_import_appends_translation_when_different_from_original(): void {
@@ -179,25 +311,23 @@ class MessageImporterTest extends BrainMonkeyTestCase {
 
         $this->connector->method( 'get_messages' )->willReturn( [
             'data'   => [
-                [
-                    'messageId' => 'msg_1',
-                    'traffic'   => 'incoming',
-                    'message'   => [ 'text' => 'Hola, ¿cómo estás?' ],
-                    'status'    => [ [ 'timestamp' => 0 ] ],
-                ]
+            [
+                'messageId' => 'msg_1',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'Hola, ¿cómo estás?' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
             ],
             'cursor' => [ 'next' => null ],
         ] );
-
-        Functions\when( 'get_comments' )->justReturn( 0 );
-        Functions\when( 'sanitize_text_field' )->returnArg();
 
         $importer->import( 'rid_1', 10, 0 );
 
         $calls = DT_Posts::$add_comment_calls;
         $this->assertNotEmpty( $calls, 'Expected add_post_comment to be called.' );
         $this->assertStringContainsString(
-            '<br><em>[Translation: Hello, how are you?]</em>',
+            '[Translation: Hello, how are you?]',
             $calls[0]['content'],
             'Translation suffix should be appended when translation differs from original.'
         );
@@ -215,18 +345,16 @@ class MessageImporterTest extends BrainMonkeyTestCase {
 
         $this->connector->method( 'get_messages' )->willReturn( [
             'data'   => [
-                [
-                    'messageId' => 'msg_2',
-                    'traffic'   => 'incoming',
-                    'message'   => [ 'text' => 'Hello world' ],
-                    'status'    => [ [ 'timestamp' => 0 ] ],
-                ]
+            [
+                'messageId' => 'msg_2',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'Hello world' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
             ],
             'cursor' => [ 'next' => null ],
         ] );
-
-        Functions\when( 'get_comments' )->justReturn( 0 );
-        Functions\when( 'sanitize_text_field' )->returnArg();
 
         $importer->import( 'rid_1', 10, 0 );
 

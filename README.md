@@ -93,6 +93,8 @@ Browse and search contacts from your CRM, select one or more, and click **Import
 
 **Saved Filters** — Create named filter rules with a polling interval that automatically import matching contacts on a recurring schedule. The available filter fields (e.g. search query, tag) are provided dynamically by the active connector and rendered in both this tab and the Importer's filter bar.
 
+Each filter has a **Do not update existing contacts** option (checked by default). When enabled, contacts that are already in DT are skipped and only new contacts are created. Uncheck this if you want the scheduled run to also refresh fields on existing contacts.
+
 ### Tab 4 — Sync Logs
 
 Paginated log of all import activity with status filter (Success / Failed / Skipped / Merged). Each row links directly to the imported DT contact.
@@ -229,6 +231,11 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 ---
 
 ## Changelog
+
+### 1.0.3
+
+- Added the ability to map Respond.io messages to different DT fields
+- Added the ability to tag the contact source based on the originating social media platform
 
 ### 1.0.2
 

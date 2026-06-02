@@ -1,10 +1,46 @@
-﻿import { useState } from '@wordpress/element';
+﻿import { useState, Fragment } from '@wordpress/element';
 import { Button } from '@wordpress/components';
 import { __ } from '@wordpress/i18n';
 import PropTypes from 'prop-types';
 
 // Connector-defined filter fields from wp_localize_script.
 const filterFields = ( window.dtCrmSync && window.dtCrmSync.filterFields ) || [];
+
+/**
+ * Collapse filter fields into render items.
+ *
+ * Fields that share an exclusive_group are grouped into a single item so the UI
+ * can render an "or" separator between them. Standalone fields pass straight through.
+ *
+ * @param {Array} fields  Raw field definitions from the connector.
+ * @returns {Array}       Ordered render items, each with type 'standalone' or 'group'.
+ */
+function buildRenderItems( fields ) {
+    const items      = [];
+    const seenGroups = {};
+
+    fields.forEach( ( field ) => {
+        const group = field.exclusive_group;
+        if ( group ) {
+            if ( seenGroups[ group ] === undefined ) {
+                seenGroups[ group ] = items.length;
+                items.push( {
+                    type:       'group',
+                    group,
+                    groupLabel: field.group_label || group,
+                    fields:     [],
+                } );
+            }
+            items[ seenGroups[ group ] ].fields.push( field );
+        } else {
+            items.push( { type: 'standalone', field } );
+        }
+    } );
+
+    return items;
+}
+
+const renderItems = buildRenderItems( filterFields );
 
 /**
  * FilterBar
@@ -57,21 +93,54 @@ export default function FilterBar( { onSubmit, isLoading } ) {
             onSubmit={ handleSubmit }
             style={ { marginBottom: '1rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'flex-end' } }
         >
-            { filterFields.map( ( field ) => (
-                <div key={ field.slug }>
-                    <label htmlFor={ `crm-filter-${ field.slug }` } className="screen-reader-text">
-                        { field.label }
-                    </label>
-                    <input
-                        id={ `crm-filter-${ field.slug }` }
-                        type="text"
-                        className="regular-text"
-                        placeholder={ field.placeholder || field.label }
-                        value={ params[ field.slug ] || '' }
-                        onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
-                    />
-                </div>
-            ) ) }
+            { renderItems.map( ( item ) => {
+                if ( item.type === 'standalone' ) {
+                    const field = item.field;
+                    return (
+                        <div key={ field.slug }>
+                            <label htmlFor={ `crm-filter-${ field.slug }` } className="screen-reader-text">
+                                { field.label }
+                            </label>
+                            <input
+                                id={ `crm-filter-${ field.slug }` }
+                                type="text"
+                                className="regular-text"
+                                placeholder={ field.placeholder || field.label }
+                                value={ params[ field.slug ] || '' }
+                                onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
+                            />
+                        </div>
+                    );
+                }
+
+                // Grouped fields — show visible labels and "or" between each input.
+                return (
+                    <div key={ item.group } className="dt-crm-filter-group">
+                        { item.fields.map( ( field, idx ) => (
+                            <Fragment key={ field.slug }>
+                                <div className="dt-crm-filter-option">
+                                    <label htmlFor={ `crm-filter-${ field.slug }` }>
+                                        { field.label }
+                                    </label>
+                                    <input
+                                        id={ `crm-filter-${ field.slug }` }
+                                        type="text"
+                                        className="regular-text"
+                                        placeholder={ field.placeholder || '' }
+                                        value={ params[ field.slug ] || '' }
+                                        onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
+                                    />
+                                </div>
+                                { idx < item.fields.length - 1 && (
+                                    <span className="dt-crm-or-separator" aria-hidden="true">
+                                        { __( 'or', 'disciple-tools-crm-sync' ) }
+                                    </span>
+                                ) }
+                            </Fragment>
+                        ) ) }
+                    </div>
+                );
+            } ) }
 
             <Button
                 variant="primary"

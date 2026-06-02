@@ -268,6 +268,32 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_API_Client' ) ) {
         }
 
         /**
+         * Fetch the channels (social platforms) connected to a contact.
+         * Endpoint: GET /v2/contact/id:{respond_id}/channels
+         *
+         * Each item in the response carries a 'source' field identifying the
+         * platform (e.g. 'facebook', 'tiktok', 'instagram'). We pull all channels
+         * in a single request — contacts rarely have more than a handful.
+         *
+         * @param string $respond_id Raw numeric ID string.
+         * @return array|WP_Error Normalised: { data: [ { source: string, ... }, ... ] }
+         */
+        public function get_contact_channels( string $respond_id ): array|\WP_Error {
+            $raw = $this->request(
+                'GET',
+                '/v2/contact/id:' . rawurlencode( $respond_id ) . '/channels',
+                [ 'limit' => 100 ]
+            );
+            if ( is_wp_error( $raw ) ) {
+                return $raw;
+            }
+
+            return [
+                'data' => $raw['items'] ?? [],
+            ];
+        }
+
+        /**
          * Fetch the message list for a contact.
          * Endpoint: GET /v2/contact/id:{respond_id}/message/list
          *

@@ -331,10 +331,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 if ( '' === $respond_key || '' === $dt_key ) {
                     continue;
                 }
-                $clean[ $respond_key ] = [
-                    'dt_key'  => $dt_key,
-                    'dt_type' => $dt_fields[ $dt_key ]['type'] ?? 'text',
-                ];
+                // Pseudo-keys don't correspond to real DT fields; skip the type lookup.
+                if ( in_array( $dt_key, [ '__activity_feed__', '__dt_note__', '__skip__' ], true ) ) {
+                    $clean[ $respond_key ] = [
+                        'dt_key'  => $dt_key,
+                        'dt_type' => 'text',
+                    ];
+                } else {
+                    $clean[ $respond_key ] = [
+                        'dt_key'  => $dt_key,
+                        'dt_type' => $dt_fields[ $dt_key ]['type'] ?? 'text',
+                    ];
+                }
             }
 
             update_option( 'dt_crm_sync_field_mapping', $clean );
@@ -388,6 +396,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
             }
 
             $saved_mapping = get_option( 'dt_crm_sync_field_mapping', [] );
+            $msg_target    = $saved_mapping['__respond_io_messages__']['dt_key'] ?? '__dt_note__';
+            // Narrow set for the message history row — only text/textarea fields make sense.
+            $msg_history_dt_options = array_filter(
+                $dt_options,
+                fn( string $dk ) => in_array( $dt_fields[ $dk ]['type'] ?? '', [ 'text', 'textarea' ], true ),
+                ARRAY_FILTER_USE_KEY
+            );
 
 // Broken-mapping notice
             // Broken entries are mapping rows whose Respond.io field name no
@@ -439,6 +454,28 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                     </tr>
                 </thead>
                 <tbody>
+                    <tr style="background: #f9f9f9;">
+                        <td>
+                            <strong><?php esc_html_e( 'Message History', 'disciple-tools-crm-sync' ); ?></strong>
+                            <p class="description" style="margin: 4px 0 0;"><?php esc_html_e( 'Full conversation log — all messages from the contact and all agent replies.', 'disciple-tools-crm-sync' ); ?></p>
+                        </td>
+                        <td>
+                            <select name="field_mapping[__respond_io_messages__]">
+                                <option value="__dt_note__" <?php selected( $msg_target, '__dt_note__' ); ?>>
+                                    <?php esc_html_e( '— DT Note (default)', 'disciple-tools-crm-sync' ); ?>
+                                </option>
+                                <option value="__skip__" <?php selected( $msg_target, '__skip__' ); ?>>
+                                    <?php esc_html_e( '— Skip (don\'t import messages)', 'disciple-tools-crm-sync' ); ?>
+                                </option>
+                                <?php foreach ( $msg_history_dt_options as $dk => $dl ) : ?>
+                                    <option value="<?php echo esc_attr( $dk ); ?>"
+                                        <?php selected( $msg_target, $dk ); ?>>
+                                        <?php echo esc_html( $dl ); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </td>
+                    </tr>
                     <?php if ( null !== $empty_msg ) : ?>
                     <tr><td colspan="2"><p class="description"><?php echo esc_html( $empty_msg ); ?></p></td></tr>
                     <?php else : foreach ( $respond_fields as $rf ) :

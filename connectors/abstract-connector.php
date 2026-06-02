@@ -203,6 +203,34 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
         public function refresh_schema_cache(): void {}
 
         /**
+         * Fetch the social platform channels connected to a contact.
+         * Returns a normalised array: { data: [ { source: string, ... }, ... ] }
+         *
+         * The default returns an empty data set. Connectors that support platform
+         * channel lookups should override this to call their API.
+         *
+         * @param string $contact_id Connector-native contact identifier.
+         * @return array|WP_Error
+         */
+        public function get_contact_channels( string $contact_id ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- Default stub; parameters required by subclass contract.
+            return [ 'data' => [] ];
+        }
+
+        /**
+         * Returns a map of platform slugs (as returned by the channels API) to
+         * their human-readable display labels for DT source registration.
+         *
+         * The default returns an empty array. Connectors that override
+         * get_contact_channels() should also override this method so the DT
+         * Sources dropdown shows clean labels before any contact has been imported.
+         *
+         * @return array<string, string> e.g. [ 'facebook' => 'Facebook', 'tiktok' => 'TikTok' ]
+         */
+        public function get_platform_source_labels(): array {
+            return [];
+        }
+
+        /**
          * Returns synthetic field definitions to include in the field-mapping UI
          * alongside the fields returned by the remote API.
          *

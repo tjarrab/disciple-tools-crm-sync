@@ -117,6 +117,9 @@
                     filterParams[ slug ] = inp.value.trim();
                 } );
 
+                var skipExistingEl = createForm.querySelector( '#dt_rio_skip_existing' );
+                var skipExisting   = skipExistingEl ? skipExistingEl.checked : true;
+
                 var submitBtn = createForm.querySelector( '[type="submit"]' );
                 if ( submitBtn ) { submitBtn.disabled = true; }
 
@@ -124,10 +127,11 @@
                     method  : 'POST',
                     headers : { 'X-WP-Nonce': nonce, 'Content-Type': 'application/json' },
                     body    : JSON.stringify( {
-                        name        : filterName,
-                        interval    : filterIntvl,
-                        poll_time   : filterPoll,
-                        filter_params: filterParams,
+                        name          : filterName,
+                        interval      : filterIntvl,
+                        poll_time     : filterPoll,
+                        filter_params : filterParams,
+                        skip_existing : skipExisting,
                     } ),
                 } )
                 .then( function( r ) {

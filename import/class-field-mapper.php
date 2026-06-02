@@ -217,5 +217,67 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Field_Mapper' ) ) {
 
             return $activity_fields;
         }
+
+        /**
+         * Return the DT target for message history, as configured in Field Mapping settings.
+         *
+         * Returns null  → write as a DT comment (the default).
+         * Returns '__skip__' → skip message import entirely.
+         * Returns a DT field key string → write the plain-text log to that field.
+         *
+         * @return string|null
+         */
+        public function get_message_history_target(): ?string {
+            $raw_mapping = get_option( 'dt_crm_sync_field_mapping', [] );
+            $dt_key      = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+            if ( '' === $dt_key || '__dt_note__' === $dt_key ) {
+                return null; // default: write as DT comment
+            }
+            return $dt_key; // '__skip__' or a real DT field key
+        }
+
+        /**
+         * Build the DT sources multiselect values for the social platforms a
+         * contact is connected through in Respond.io.
+         *
+         * Takes the normalised channels response ({ data: [...] }) from
+         * get_contact_channels() and returns a sources-compatible array ready to
+         * merge into the fields sent to DT_Posts::create_post() / update_post().
+         * Duplicate slugs are de-duped, and each slug is run through sanitize_key()
+         * before inclusion.
+         *
+         * Returns an empty array when no channel items are present so callers can
+         * safely merge without side-effects.
+         *
+         * @param array $channels Normalised channels response: { data: [ { source: string, ... }, ... ] }
+         * @return array e.g. [ 'values' => [ [ 'value' => 'facebook' ], [ 'value' => 'tiktok' ] ] ]
+         */
+        public function map_platform_sources( array $channels ): array {
+            $items = $channels['data'] ?? [];
+            if ( empty( $items ) ) {
+                return [];
+            }
+
+            $seen   = [];
+            $values = [];
+            foreach ( $items as $item ) {
+                $raw_slug = $item['source'] ?? '';
+                if ( empty( $raw_slug ) ) {
+                    continue;
+                }
+                $slug = sanitize_key( $raw_slug );
+                if ( empty( $slug ) || isset( $seen[ $slug ] ) ) {
+                    continue;
+                }
+                $seen[ $slug ] = true;
+                $values[]      = [ 'value' => $slug ];
+            }
+
+            if ( empty( $values ) ) {
+                return [];
+            }
+
+            return [ 'values' => $values ];
+        }
     }
 }

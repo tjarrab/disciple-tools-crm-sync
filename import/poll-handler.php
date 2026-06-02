@@ -57,6 +57,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
                 return;
             }
 
+            $skip_existing = $envelope['skip_existing'] ?? true;
+
 // Resolve the connector
             $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
 
@@ -135,9 +137,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
                     'dt_crm_sync_process_batch',
                     [
                     [
-                        'ids'      => array_map( 'intval', $chunk ),
-                        '_token'   => uniqid( '', true ),
-                        '_trigger' => 'scheduled',
+                        'ids'            => array_map( 'intval', $chunk ),
+                        '_token'         => uniqid( '', true ),
+                        '_trigger'       => 'scheduled',
+                        '_skip_existing' => $skip_existing,
                     ]
                     ]
                 );

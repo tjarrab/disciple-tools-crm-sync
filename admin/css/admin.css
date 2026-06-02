@@ -17,3 +17,38 @@
 .dt-crm-status--error {
     color: #b32d2e; /* WP admin error red */
 }
+
+/* Filter group — renders mutually exclusive fields side by side with an "or" separator.
+   Used in the Automations create-filter form and the manual importer FilterBar. */
+.dt-crm-filter-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.5rem;
+}
+
+.dt-crm-filter-option {
+    display: flex;
+    flex-direction: column;
+}
+
+.dt-crm-filter-option label {
+    display: block;
+    margin-bottom: 4px;
+    font-weight: 400;
+}
+
+.dt-crm-filter-option .description {
+    margin-top: 4px;
+}
+
+.dt-crm-or-separator {
+    display: inline-block;
+    align-self: flex-end;
+    padding: 0 0.25rem;
+    padding-bottom: 6px; /* aligns roughly with input baseline */
+    color: #646970;
+    font-size: 0.85em;
+    letter-spacing: 0.03em;
+    line-height: 1;
+}
