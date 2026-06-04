@@ -74,6 +74,12 @@ if ( ! function_exists( 'plugin_dir_url' ) ) {
     }
 }
 
+if ( ! function_exists( 'get_file_data' ) ) {
+    function get_file_data( string $file, array $headers ): array { // phpcs:ignore
+        return array_fill_keys( array_keys( $headers ), '' );
+    }
+}
+
 if ( ! function_exists( 'register_activation_hook' ) ) {
     function register_activation_hook( $file, $callback ): void {} // phpcs:ignore
 }
