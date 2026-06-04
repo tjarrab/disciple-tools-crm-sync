@@ -20,6 +20,7 @@ export default function ImportButton( { selectedIds, isLoading, onSessionExpired
     const [ dispatching, setDispatching ] = useState( false );
     const [ importQueued, setImportQueued ] = useState( false );
     const [ error, setError ] = useState( null );
+    const [ updateExisting, setUpdateExisting ] = useState( false );
 
     const disabled = selectedIds.size === 0 || isLoading || dispatching;
 
@@ -28,6 +29,7 @@ export default function ImportButton( { selectedIds, isLoading, onSessionExpired
 
     async function handleImport() {
         setDispatching( true );
+        setImportQueued( false );
         setError( null );
 
         const apiRoot = window.dtCrmSync?.apiRoot;
@@ -40,7 +42,7 @@ export default function ImportButton( { selectedIds, isLoading, onSessionExpired
         try {
             await apiFetch( apiRoot + '/import', {
                 method: 'POST',
-                body: JSON.stringify( { ids: [ ...selectedIds ] } ),
+                body: JSON.stringify( { ids: [ ...selectedIds ], skip_existing: ! updateExisting } ),
             } );
             setImportQueued( true );
         } catch ( err ) {
@@ -56,6 +58,16 @@ export default function ImportButton( { selectedIds, isLoading, onSessionExpired
 
     return (
         <div style={ { marginTop: '1.25rem' } }>
+            <label style={ { display: 'block', marginBottom: '0.75rem' } }>
+                <input
+                    type="checkbox"
+                    checked={ updateExisting }
+                    onChange={ ( e ) => setUpdateExisting( e.target.checked ) }
+                    style={ { marginRight: '0.4rem' } }
+                />
+                { __( 'Update existing contacts', 'disciple-tools-crm-sync' ) }
+            </label>
+
             { importQueued && (
                 <div className="notice notice-success inline" style={ { marginBottom: '0.75rem' } }>
                     <p>

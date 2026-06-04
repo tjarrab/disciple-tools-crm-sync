@@ -33,12 +33,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
 
 // POST handler — must run before any HTML output
             if ( isset( $_POST['dt_crm_sync_nonce'] ) ) {
-                // check_admin_referer() verifies nonce AND HTTP_REFERER; dies on failure.
-                check_admin_referer( 'dt_crm_sync_admin_form', 'dt_crm_sync_nonce' );
-
                 if ( ! current_user_can( 'manage_dt' ) ) {
                     wp_die( esc_html__( 'You do not have permission to perform this action.', 'disciple-tools-crm-sync' ) );
                 }
+
+                check_admin_referer( 'dt_crm_sync_admin_form', 'dt_crm_sync_nonce' );
 
                 $values   = dt_recursive_sanitize_array( $_POST );
                 $existing = get_option( 'dt_crm_sync_settings', [] );
@@ -68,6 +67,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                         $existing_cred = $stored_creds[ $slug ] ?? '';
 
                         if ( 'password' === $type ) {
+                            // Skip $submitted_creds for password fields — that array came through
+                            // dt_recursive_sanitize_array(), which runs sanitize_text_field() over every
+                            // value. sanitize_text_field() strips +, /, and = without warning, which are
+                            // all valid characters in API keys and silently corrupts them before they reach
+                            // encrypt_value(). The nonce was already verified by check_admin_referer() above.
+                            $submitted = wp_unslash( $_POST['connectors'][ $connector_slug ][ $slug ] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanitisation intentionally skipped; see comment above.
+
                             // Encrypt new value or preserve existing.
                             if ( ! empty( $submitted ) ) {
                                 try {
@@ -123,7 +129,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 $active_slug      = $active_slug ?: $first_slug;
             }
 
-            $stored_creds = $settings['connectors'][ $active_slug ] ?? [];
+            $stored_creds    = $settings['connectors'][ $active_slug ] ?? [];
+            $connector_label = $active_connector
+                ? $active_connector->get_label()
+                : __( 'CRM', 'disciple-tools-crm-sync' );
 
 // Admin notices
             if ( 'success' === $notice ) {
@@ -263,20 +272,37 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 </p>
 
                 <pre id="dt-rio-test-log" style="display:none; margin:0 0 16px; background:#f8f8f8; border:1px solid #ddd; padding:8px 12px; font-size:12px; max-height:160px; overflow-y:auto; white-space:pre-wrap; word-break:break-all;"></pre>
+                <pre id="dt-rio-schema-log" style="display:none; margin:0 0 16px; background:#f8f8f8; border:1px solid #ddd; padding:8px 12px; font-size:12px; max-height:160px; overflow-y:auto; white-space:pre-wrap; word-break:break-all;"></pre>
 
                 <h2><?php esc_html_e( 'Field Mapping', 'disciple-tools-crm-sync' ); ?></h2>
                 <p>
-                    <?php esc_html_e( 'Field Mapping controls how Respond.io custom fields are written into Disciple.Tools contact fields during every import (manual, scheduled, and webhook).', 'disciple-tools-crm-sync' ); ?>
+                    <?php echo esc_html( sprintf(
+                        /* translators: %s: connector name, e.g. "Respond.io" */
+                        __( 'Field Mapping controls how %s custom fields are written into Disciple.Tools contact fields during every import (manual, scheduled, and webhook).', 'disciple-tools-crm-sync' ),
+                        $connector_label
+                    ) ); ?>
                 </p>
                 <p><?php esc_html_e( 'How to use:', 'disciple-tools-crm-sync' ); ?></p>
                 <ol style="margin: 0 0 16px 1.5em; list-style: decimal;">
-                    <li><?php esc_html_e( 'Save your API credentials above, then click "Refresh Schema" to fetch your Respond.io custom field list.', 'disciple-tools-crm-sync' ); ?></li>
-                    <li><?php esc_html_e( 'The table below shows each Respond.io custom field on the left. Use the dropdown on the right to choose the DT contact field it should populate.', 'disciple-tools-crm-sync' ); ?></li>
+                    <li><?php echo esc_html( sprintf(
+                        /* translators: %s: connector name, e.g. "Respond.io" */
+                        __( 'Save your API credentials above, then click "Refresh Schema" to fetch your %s custom field list.', 'disciple-tools-crm-sync' ),
+                        $connector_label
+                    ) ); ?></li>
+                    <li><?php echo esc_html( sprintf(
+                        /* translators: %s: connector name, e.g. "Respond.io" */
+                        __( 'The table below shows each %s custom field on the left. Use the dropdown on the right to choose the DT contact field it should populate.', 'disciple-tools-crm-sync' ),
+                        $connector_label
+                    ) ); ?></li>
                     <li><?php esc_html_e( 'Select "— skip —" for any field you do not want imported.', 'disciple-tools-crm-sync' ); ?></li>
                     <li><?php esc_html_e( 'Click "Save Settings" at the bottom of this page to store your choices.', 'disciple-tools-crm-sync' ); ?></li>
                 </ol>
                 <p class="description">
-                    <?php esc_html_e( 'Note: if you rename or delete a custom field in Respond.io, its mapping entry will be flagged as broken the next time you click "Refresh Schema". Re-save this page after adding a replacement mapping to clear the warning.', 'disciple-tools-crm-sync' ); ?>
+                    <?php echo esc_html( sprintf(
+                        /* translators: %s: connector name, e.g. "Respond.io" */
+                        __( 'Note: if you rename or delete a custom field in %s, its mapping entry will be flagged as broken the next time you click "Refresh Schema". Re-save this page after adding a replacement mapping to clear the warning.', 'disciple-tools-crm-sync' ),
+                        $connector_label
+                    ) ); ?>
                 </p>
                 <?php $this->render_field_mapping( $active_connector ); ?>
 
@@ -290,10 +316,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                                         name="purge_on_uninstall"
                                         value="1"
                                         <?php checked( ! empty( $settings['purge_on_uninstall'] ) ); ?>>
-                                <?php esc_html_e( 'Delete all Respond.io metadata from DT contacts when uninstalling', 'disciple-tools-crm-sync' ); ?>
+                                <?php esc_html_e( 'Delete all CRM sync contact metadata from DT contacts when uninstalling', 'disciple-tools-crm-sync' ); ?>
                             </label>
                             <p class="description">
-                                <?php esc_html_e( 'When checked, uninstalling the plugin will permanently delete the following data from all DT contacts: _respond_io_id, _respond_io_merged_ids, _respond_io_last_sync (post meta) and _respond_io_message_id (comment meta).', 'disciple-tools-crm-sync' ); ?>
+                                <?php esc_html_e( 'When checked, uninstalling the plugin will permanently delete the following data from all DT contacts: _respond_io_id, _respond_io_merged_ids, _respond_io_last_sync, _respond_io_notes_comment_id, _respond_io_message_log_comment_id (Respond.io post meta); _metricool_id, _metricool_merged_ids, _metricool_last_sync, _metricool_notes_comment_id, _metricool_message_log_comment_id (Metricool post meta); and all comment meta with a _respond_io_ or _metricool_ prefix.', 'disciple-tools-crm-sync' ); ?>
                             </p>
                             <p class="description" style="color:#b32d2e;font-weight:600;">
                                 <?php esc_html_e( '⚠ This action is irreversible. Contact history links will be permanently removed.', 'disciple-tools-crm-sync' ); ?>
@@ -358,15 +384,25 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
          * @param Disciple_Tools_CRM_Sync_Abstract_Connector|null $connector Active connector instance, or null.
          */
         private function render_field_mapping( ?Disciple_Tools_CRM_Sync_Abstract_Connector $connector = null ): void {
+            $connector_label = $connector instanceof Disciple_Tools_CRM_Sync_Abstract_Connector
+                ? $connector->get_label()
+                : __( 'CRM', 'disciple-tools-crm-sync' );
+
             // Use the transient as a gate: if it is cold the admin has not yet clicked
             // "Refresh Schema", so prompt them rather than making a live API call.
-            $schema = get_transient( Disciple_Tools_CRM_Sync_API_Client::FIELD_SCHEMA_TRANSIENT );
+            $schema = $connector instanceof Disciple_Tools_CRM_Sync_Abstract_Connector
+                ? get_transient( $connector->get_schema_transient_key() )
+                : false;
 
             // $empty_msg is set when there is no data to display; the table is always
             // rendered so the test suite (and the admin) can always find the <thead>.
             $empty_msg = null;
             if ( false === $schema || ! is_array( $schema ) ) {
-                $empty_msg = esc_html__( 'No schema loaded. Save credentials then click "Refresh Schema" to fetch Respond.io custom field definitions.', 'disciple-tools-crm-sync' );
+                $empty_msg = esc_html( sprintf(
+                    /* translators: %s: connector name, e.g. "Respond.io" */
+                    __( 'No schema loaded. Save credentials then click "Refresh Schema" to fetch %s custom field definitions.', 'disciple-tools-crm-sync' ),
+                    $connector_label
+                ) );
                 $schema    = [];
             }
 
@@ -380,7 +416,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
             $respond_fields = $schema;
 
             if ( null === $empty_msg && empty( $respond_fields ) ) {
-                $empty_msg = esc_html__( 'No custom fields found in the Respond.io schema.', 'disciple-tools-crm-sync' );
+                $empty_msg = esc_html( sprintf(
+                    /* translators: %s: connector name, e.g. "Respond.io" */
+                    __( 'No custom fields found in the %s schema.', 'disciple-tools-crm-sync' ),
+                    $connector_label
+                ) );
             }
 
             $dt_fields = DT_Posts::get_post_settings( 'contacts' )['fields'] ?? [];
@@ -396,7 +436,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
             }
 
             $saved_mapping = get_option( 'dt_crm_sync_field_mapping', [] );
-            $msg_target    = $saved_mapping['__respond_io_messages__']['dt_key'] ?? '__dt_note__';
+            $msg_key       = $connector ? $connector->get_messages_field_key() : '__messages__';
+            $msg_target    = $saved_mapping[ $msg_key ]['dt_key'] ?? '__dt_note__';
             // Narrow set for the message history row — only text/textarea fields make sense.
             $msg_history_dt_options = array_filter(
                 $dt_options,
@@ -460,7 +501,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                             <p class="description" style="margin: 4px 0 0;"><?php esc_html_e( 'Full conversation log — all messages from the contact and all agent replies.', 'disciple-tools-crm-sync' ); ?></p>
                         </td>
                         <td>
-                            <select name="field_mapping[__respond_io_messages__]">
+                            <select name="field_mapping[<?php echo esc_attr( $msg_key ); ?>]">
                                 <option value="__dt_note__" <?php selected( $msg_target, '__dt_note__' ); ?>>
                                     <?php esc_html_e( '— DT Note (default)', 'disciple-tools-crm-sync' ); ?>
                                 </option>

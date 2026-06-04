@@ -8,8 +8,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
      * Google Gemini translation provider.
      *
      * Uses the Gemini generative language REST API:
-     *   - GET  /v1beta/models?key={key}                             - list models
-     *   - POST /v1beta/models/{model}:generateContent?key={key}     - generate translation
+     *   - GET  /v1beta/models                             - list models
+     *   - POST /v1beta/models/{model}:generateContent     - generate translation
+     *
+     * The API key is passed via the x-goog-api-key request header rather than
+     * as a URL query parameter, so it doesn't show up in server or proxy logs.
      *
      * Model list is cached in transient `dt_crm_sync_gemini_models` for 24 hours and
      * can be flushed via the REST endpoint DELETE /translation/models-cache.
@@ -19,6 +22,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
     class Disciple_Tools_CRM_Sync_Gemini_Translation_Provider extends Disciple_Tools_CRM_Sync_Abstract_Translation_Provider {
 
         private const API_BASE        = 'https://generativelanguage.googleapis.com/v1beta';
+        private const AUTH_HEADER      = 'x-goog-api-key';
         private const MODELS_TRANSIENT = 'dt_crm_sync_gemini_models';
         private const TRANSIENT_TTL    = DAY_IN_SECONDS;
         private const REQUEST_TIMEOUT  = 30;
@@ -61,8 +65,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
                 return $cached;
             }
 
-            $url      = add_query_arg( 'key', $this->api_key, self::API_BASE . '/models' );
-            $response = wp_safe_remote_get( $url, [ 'timeout' => self::REQUEST_TIMEOUT ] );
+            $url      = self::API_BASE . '/models';
+            $response = wp_safe_remote_get( $url, [
+                'timeout' => self::REQUEST_TIMEOUT,
+                'headers' => [ self::AUTH_HEADER => $this->api_key ],
+            ] );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
@@ -116,7 +123,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
          * @return array{ translation: string, http_status: int, response_preview: string }|WP_Error
          */
         public function translate_with_meta( string $text, string $prompt ): array|WP_Error {
-            $url  = add_query_arg( 'key', $this->api_key, self::API_BASE . '/' . $this->model . ':generateContent' );
+            $url  = self::API_BASE . '/' . $this->model . ':generateContent';
             $body = wp_json_encode( [
                 'contents' => [
                     [
@@ -129,7 +136,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
 
             $response = wp_safe_remote_post( $url, [
                 'timeout' => self::REQUEST_TIMEOUT,
-                'headers' => [ 'Content-Type' => 'application/json' ],
+                'headers' => [
+                    'Content-Type'     => 'application/json',
+                    self::AUTH_HEADER  => $this->api_key,
+                ],
                 'body'    => $body,
             ] );
 
@@ -178,11 +188,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
          *
          * @param array<int, string> $texts  Indexed array of message texts.
          * @param string             $prompt The instruction prepended to the request.
-         * @return array<int, string>|WP_Error
+         * @return array{ translations: array<int, string>, http_status: int|null, response_preview: string|null }|WP_Error
          */
         public function translate_batch( array $texts, string $prompt ): array|WP_Error {
             if ( empty( $texts ) ) {
-                return [];
+                return [ 'translations' => [], 'http_status' => null, 'response_preview' => null ];
             }
 
             $batch_prompt = $prompt
@@ -190,7 +200,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
                 . "Return ONLY a valid JSON array of translated strings in exactly the same order, with no extra text:\n"
                 . wp_json_encode( array_values( $texts ) );
 
-            $url  = add_query_arg( 'key', $this->api_key, self::API_BASE . '/' . $this->model . ':generateContent' );
+            $url  = self::API_BASE . '/' . $this->model . ':generateContent';
             $body = wp_json_encode( [
                 'contents' => [
                     [
@@ -203,7 +213,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
 
             $response = wp_safe_remote_post( $url, [
                 'timeout' => self::REQUEST_TIMEOUT,
-                'headers' => [ 'Content-Type' => 'application/json' ],
+                'headers' => [
+                    'Content-Type'     => 'application/json',
+                    self::AUTH_HEADER  => $this->api_key,
+                ],
                 'body'    => $body,
             ] );
 
@@ -238,13 +251,17 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
             }
 
             // Re-key the result to match the original $texts keys.
-            $keys    = array_keys( $texts );
-            $results = [];
+            $keys         = array_keys( $texts );
+            $translations = [];
             foreach ( $keys as $position => $original_key ) {
-                $results[ $original_key ] = (string) ( $translated[ $position ] ?? $texts[ $original_key ] );
+                $translations[ $original_key ] = (string) ( $translated[ $position ] ?? $texts[ $original_key ] );
             }
 
-            return $results;
+            return [
+                'translations'     => $translations,
+                'http_status'      => $http_status,
+                'response_preview' => substr( $raw_body, 0, 20 ),
+            ];
         }
     }
 }

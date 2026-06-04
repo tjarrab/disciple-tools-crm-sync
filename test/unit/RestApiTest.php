@@ -57,6 +57,7 @@ class RestApiTest extends BrainMonkeyTestCase {
 
     public function test_schema_cached_without_api(): void {
         $cached = [ [ 'name' => 'field1', 'type' => 'text' ] ];
+        Functions\when( 'get_option' )->justReturn( [ 'active_connector' => 'respond_io' ] );
         Functions\when( 'get_transient' )->justReturn( $cached );
         Functions\expect( 'wp_safe_remote_request' )->never();
 

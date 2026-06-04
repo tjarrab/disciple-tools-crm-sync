@@ -15,14 +15,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Logger' ) ) {
          * Write a single row to the sync log table.
          *
          * @param string   $trigger     Origin of the import: 'manual' | 'scheduled' | 'webhook'
-         * @param string   $respond_id  The Respond.io contact ID string.
+         * @param string   $contact_id  The connector's contact ID.
          * @param int|null $dt_post_id  The DT contact post ID, or null if creation failed.
          * @param string   $status      Outcome: 'success' | 'failed' | 'merged' | 'skipped'
          * @param string   $message     Optional detail (error message, merge source ID, etc.)
          */
         public static function write(
             string $trigger,
-            string $respond_id,
+            string $contact_id,
             ?int $dt_post_id,
             string $status,
             string $message
@@ -35,7 +35,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Logger' ) ) {
                 [
                     'created_at'   => gmdate( 'Y-m-d H:i:s' ),
                     'trigger_type' => $trigger,
-                    'respond_id'   => $respond_id,
+                    'contact_id'   => $contact_id,
                     'dt_post_id'   => $dt_post_id,
                     'status'       => $status,
                     'message'      => $message,
@@ -43,7 +43,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Logger' ) ) {
                 [
                     '%s', // created_at
                     '%s', // trigger_type
-                    '%s', // respond_id
+                    '%s', // contact_id
                     '%d', // dt_post_id — $wpdb inserts SQL NULL for PHP null (WP 6.0+); format specifier is bypassed
                     '%s', // status
                     '%s', // message

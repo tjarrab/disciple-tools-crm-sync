@@ -128,6 +128,51 @@ describe( 'Contact Importer tab (React SPA)', () => {
             .should( 'be.visible' );
     } );
 
+    it( 'clears the success banner when a second import starts', () => {
+        cy.intercept( 'POST', '**/disciple-tools-crm-sync/v1/contacts', {
+            statusCode: 200,
+            body: {
+                data: [ { id: 5, firstName: 'Eve', lastName: 'Test', phone: '', email: '' } ],
+                cursor: { next: null },
+                total: 1,
+            },
+        } ).as( 'getContacts' );
+
+        // First import resolves immediately.
+        cy.intercept( 'POST', '**/disciple-tools-crm-sync/v1/import', {
+            statusCode: 200,
+            body: { status: 'queued', batches: 1 },
+        } ).as( 'firstImport' );
+
+        cy.get( 'button' ).contains( /fetch|apply|search/i ).click();
+        cy.wait( '@getContacts' );
+
+        cy.get( '#dt-crm-sync-importer-root table tbody tr:first-child input[type="checkbox"]' ).check();
+        cy.get( 'button' ).contains( /^import/i ).click();
+        cy.wait( '@firstImport' );
+
+        // Success banner should be visible after the first import.
+        cy.get( '.notice-success', { timeout: 10000 } ).should( 'be.visible' );
+
+        // Second import is delayed so we can assert state while it's in-flight.
+        cy.intercept( 'POST', '**/disciple-tools-crm-sync/v1/import', ( req ) => {
+            req.reply( ( res ) => {
+                res.setDelay( 800 );
+                res.send( { statusCode: 200, body: { status: 'queued', batches: 1 } } );
+            } );
+        } ).as( 'secondImport' );
+
+        cy.get( 'button' ).contains( /^import/i ).click();
+
+        // Banner must be gone while the second request is still in-flight.
+        cy.get( '.notice-success' ).should( 'not.exist' );
+
+        cy.wait( '@secondImport' );
+
+        // Banner returns once the second import resolves.
+        cy.get( '.notice-success', { timeout: 10000 } ).should( 'be.visible' );
+    } );
+
 // Session-expired banner
 
     it( 'shows a session-expired banner when the API returns 401', () => {
@@ -163,6 +208,23 @@ describe( 'Contact Importer tab (React SPA)', () => {
 
         cy.get( 'button' ).contains( /fetch|apply|search/i ).click();
         cy.wait( '@serverError' );
+
+        cy.get( '.notice.notice-error', { timeout: 10000 } ).should( 'be.visible' );
+    } );
+
+    it( 'shows an error notice when the contacts endpoint returns a non-JSON 200 body', () => {
+        // Regression test for the response.json() await bug: without `return await`,
+        // a SyntaxError from parsing a non-JSON body (e.g. an HTML maintenance page
+        // served with a 200) escapes the try/catch and reaches the caller as a raw
+        // rejection, bypassing all typed error handling and leaving the UI stuck.
+        cy.intercept( 'POST', '**/disciple-tools-crm-sync/v1/contacts', {
+            statusCode: 200,
+            headers: { 'Content-Type': 'text/html' },
+            body: '<html><body>Service temporarily unavailable</body></html>',
+        } ).as( 'nonJsonResponse' );
+
+        cy.get( 'button' ).contains( /fetch|apply|search/i ).click();
+        cy.wait( '@nonJsonResponse' );
 
         cy.get( '.notice.notice-error', { timeout: 10000 } ).should( 'be.visible' );
     } );

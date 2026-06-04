@@ -35,13 +35,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
          * Returns the original $text on any failure so the import comment is never empty.
          *
          * @param string $text       Message text to translate.
-         * @param string $respond_id Respond.io contact ID (used for logging only).
+         * @param string $contact_id The connector's contact ID, passed through to the translation log row.
          * @return string Translated text, or the original on failure.
          */
-        public function translate( string $text, string $respond_id ): string {
+        public function translate( string $text, string $contact_id ): string {
             if ( ! $this->rate_limiter->is_allowed( $this->daily_limit ) ) {
                 Disciple_Tools_CRM_Sync_Translation_Logger::write(
-                    $respond_id,
+                    $contact_id,
                     null,
                     null,
                     'rate_limited',
@@ -55,7 +55,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
             if ( is_wp_error( $result ) ) {
                 $error_data = $result->get_error_data();
                 Disciple_Tools_CRM_Sync_Translation_Logger::write(
-                    $respond_id,
+                    $contact_id,
                     is_array( $error_data ) ? ( $error_data['http_status'] ?? null ) : null,
                     is_array( $error_data ) ? ( $error_data['response_preview'] ?? null ) : null,
                     'failed',
@@ -67,7 +67,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
             $this->rate_limiter->increment();
 
             Disciple_Tools_CRM_Sync_Translation_Logger::write(
-                $respond_id,
+                $contact_id,
                 $result['http_status'],
                 $result['response_preview'],
                 'success'
@@ -88,10 +88,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
          * translations by key without tracking positions.
          *
          * @param array<int, string> $texts      Indexed array of message texts to translate.
-         * @param string             $respond_id Respond.io contact ID (used for logging only).
+         * @param string             $contact_id The connector's contact ID, passed through to the translation log row.
          * @return array<int, string> Translated strings, or originals on any failure.
          */
-        public function translate_batch( array $texts, string $respond_id ): array {
+        public function translate_batch( array $texts, string $contact_id ): array {
             if ( empty( $texts ) ) {
                 return [];
             }
@@ -100,7 +100,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
 
             if ( 0 === $remaining ) {
                 Disciple_Tools_CRM_Sync_Translation_Logger::write(
-                    $respond_id,
+                    $contact_id,
                     null,
                     null,
                     'rate_limited',
@@ -121,7 +121,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
             if ( is_wp_error( $result ) ) {
                 $error_data = $result->get_error_data();
                 Disciple_Tools_CRM_Sync_Translation_Logger::write(
-                    $respond_id,
+                    $contact_id,
                     is_array( $error_data ) ? ( $error_data['http_status'] ?? null ) : null,
                     is_array( $error_data ) ? ( $error_data['response_preview'] ?? null ) : null,
                     'failed',
@@ -147,22 +147,25 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Service' ) ) {
                 $status = 'success';
             }
 
-            // Pick http_status from the result array if the provider added it, otherwise null.
-            $http_status      = null;
-            $response_preview = null;
-
             Disciple_Tools_CRM_Sync_Translation_Logger::write(
-                $respond_id,
-                $http_status,
-                $response_preview,
+                $contact_id,
+                $result['http_status'],
+                $result['response_preview'],
                 $status,
                 $detail
             );
 
-            // Merge: translated keys get provider result, skipped keys keep the original.
-            $output = $texts;
-            foreach ( $result as $key => $translated ) {
-                $output[ $key ] = $translated;
+            // Re-map provider results back to the original batch keys positionally.
+            // Providers may return sequential integer keys rather than the original
+            // sparse keys, so we strip the provider's keys entirely and zip by position
+            // against the keys we sent. Anything that falls outside the returned range
+            // keeps the original text from the $texts base.
+            $output    = $texts;
+            $returned  = array_values( $result['translations'] );
+            foreach ( array_values( $translate_keys ) as $pos => $key ) {
+                if ( array_key_exists( $pos, $returned ) ) {
+                    $output[ $key ] = $returned[ $pos ];
+                }
             }
 
             return $output;

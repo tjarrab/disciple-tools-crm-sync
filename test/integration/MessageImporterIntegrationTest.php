@@ -40,6 +40,7 @@ class MessageImporterIntegrationTest extends TestCase {
 
         $this->connector = $this->createMock( Disciple_Tools_CRM_Sync_Abstract_Connector::class );
         $this->connector->method( 'get_meta_key_prefix' )->willReturn( '_respond_io_' );
+        $this->connector->method( 'get_label' )->willReturn( 'Respond.io' );
 
         $this->sideloader = $this->createMock( Disciple_Tools_CRM_Sync_Media_Sideloader::class );
         // Default sideload: return the original URL unchanged (no HTTP calls).

@@ -460,4 +460,104 @@ class PollHandlerTest extends BrainMonkeyTestCase {
         $this->assertTrue( $poll_rescheduled, 'A rate-limit on page 2 must reschedule the full poll.' );
         $this->assertEmpty( $batch_ids, 'Rate-limited poll must not schedule any batch events — the rescheduled poll will process all contacts from scratch.' );
     }
+
+// Concurrency lock
+
+    public function test_concurrent_poll_is_skipped_when_lock_held(): void {
+        // A non-false value from get_transient means the lock is held by another execution.
+        $this->mock_get_option_for_filter( [ 'search' => '' ] );
+        Functions\when( 'get_transient' )->justReturn( time() - 30 );
+
+        $batch_scheduled = false;
+        Functions\when( 'wp_schedule_single_event' )->alias(
+            function ( $t, string $hook ) use ( &$batch_scheduled ): bool {
+                if ( 'dt_crm_sync_process_batch' === $hook ) {
+                    $batch_scheduled = true;
+                }
+                return true;
+            }
+        );
+
+        ( new Disciple_Tools_CRM_Sync_Poll_Handler() )->run_poll( self::FILTER_ID );
+
+        global $wpdb;
+        $statuses = array_column( array_column( $wpdb->insert_calls, 'data' ), 'status' );
+        $this->assertContains( 'skipped', $statuses, 'A held lock must write a "skipped" log entry.' );
+        $this->assertFalse( $batch_scheduled, 'No batch should be scheduled when the poll lock is already held.' );
+    }
+
+    public function test_lock_is_released_after_successful_poll(): void {
+        // The default get_transient stub returns false (no lock held), so the poll
+        // runs normally. We capture delete_transient to confirm the lock is freed.
+        $this->mock_get_option_for_filter( [ 'search' => '' ] );
+        $this->mock_connector_returning_contacts( 1 );
+        Functions\when( 'wp_schedule_single_event' )->justReturn( true );
+
+        $deleted_keys = [];
+        Functions\when( 'delete_transient' )->alias(
+            function ( string $key ) use ( &$deleted_keys ): bool {
+                $deleted_keys[] = $key;
+                return true;
+            }
+        );
+
+        ( new Disciple_Tools_CRM_Sync_Poll_Handler() )->run_poll( self::FILTER_ID );
+
+        $this->assertContains(
+            'dt_crm_sync_poll_lock_' . self::FILTER_ID,
+            $deleted_keys,
+            'Lock transient must be deleted after a successful poll run.'
+        );
+    }
+
+// Zero-value cursor
+
+    public function test_pagination_continues_through_zero_cursor(): void {
+        // PHP's empty('0') is true, so a cursorId of '0' in the pagination.next URL
+        // used to stop the loop after page 1. With the null check this should page through
+        // both pages and schedule all contacts.
+        $this->mock_get_option_for_filter( [ 'search' => '' ] );
+
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_connectors' === $hook
+                ? [ 'respond_io' => 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ]
+                : $value
+        );
+        Functions\when( 'wp_timezone_string' )->justReturn( 'UTC' );
+        Functions\when( 'add_query_arg' )->justReturn( 'https://api.test/mocked' );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+
+        $page1_body = json_encode( [
+            'items'      => [ [ 'id' => 1 ], [ 'id' => 2 ] ],
+            'pagination' => [ 'next' => 'https://api.test/v2/contact/list?cursorId=0&limit=50' ],
+        ] );
+        $page2_body = json_encode( [
+            'items'      => [ [ 'id' => 3 ] ],
+            'pagination' => [],
+        ] );
+
+        $call = 0;
+        Functions\when( 'wp_remote_retrieve_body' )->alias(
+            function () use ( &$call, $page1_body, $page2_body ) {
+                return 0 === $call++ ? $page1_body : $page2_body;
+            }
+        );
+
+        $batch_ids = [];
+        Functions\when( 'wp_schedule_single_event' )->alias(
+            function ( $time, $hook, $args ) use ( &$batch_ids ) {
+                if ( 'dt_crm_sync_process_batch' === $hook ) {
+                    $batch_ids = array_merge( $batch_ids, $args[0]['ids'] );
+                }
+                return true;
+            }
+        );
+
+        ( new Disciple_Tools_CRM_Sync_Poll_Handler() )->run_poll( self::FILTER_ID );
+
+        $this->assertCount( 3, $batch_ids, 'All 3 contacts across both pages must be scheduled when cursorId is 0.' );
+    }
 }

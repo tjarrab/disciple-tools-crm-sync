@@ -163,6 +163,9 @@ if ( ! function_exists( 'get_post_meta' ) ) {
 if ( ! function_exists( 'update_post_meta' ) ) {
     function update_post_meta( $post_id, string $meta_key, mixed $meta_value, mixed $prev_value = '' ): int|bool { return true; } // phpcs:ignore
 }
+if ( ! function_exists( 'delete_post_meta' ) ) {
+    function delete_post_meta( $post_id, string $meta_key, mixed $meta_value = '' ): bool { return true; } // phpcs:ignore
+}
 if ( ! function_exists( 'wp_strip_all_tags' ) ) {
     function wp_strip_all_tags( string $text, bool $remove_breaks = false ): string { // phpcs:ignore
         $text = strip_tags( $text );

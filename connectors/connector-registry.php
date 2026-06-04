@@ -125,24 +125,47 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Registry' ) ) {
                 $stored_credentials = [];
             }
 
-            // Decrypt any credential values that look like encrypted ciphertext
-            // (non-empty strings that are not already plaintext URLs/keys).
-            // Connectors declare which fields are sensitive via get_credential_fields()
-            // type='password'. We decrypt all stored credential values and let each
-            // connector decide which ones it needs as plaintext.
+            // Walk the stored credentials and decrypt anything that looks like it
+            // came through encrypt_value(). Plain values (URLs, unencrypted tokens)
+            // pass straight through. If a value matches the ciphertext format but
+            // decryption fails — corrupt key, tampered data, key rotation — we bail
+            // out entirely rather than passing garbage to the connector.
             $credentials = [];
             foreach ( $stored_credentials as $key => $value ) {
                 if ( is_string( $value ) && '' !== $value ) {
-                    $decrypted = Disciple_Tools_CRM_Sync::decrypt_value( $value );
-                    // decrypt_value() returns false if the value is not encrypted
-                    // ciphertext (e.g. a plain URL). In that case keep original.
-                    $credentials[ $key ] = ( false !== $decrypted ) ? $decrypted : $value;
+                    if ( self::is_encrypted_value( $value ) ) {
+                        $decrypted = Disciple_Tools_CRM_Sync::decrypt_value( $value );
+                        if ( false === $decrypted ) {
+                            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                                error_log( '[DT CRM Sync] Credential "' . $key . '" could not be decrypted. Re-save credentials in the plugin settings.' );
+                            }
+                            return null;
+                        }
+                        $credentials[ $key ] = $decrypted;
+                    } else {
+                        $credentials[ $key ] = $value;
+                    }
                 } else {
                     $credentials[ $key ] = $value;
                 }
             }
 
             return self::make( $slug, $credentials );
+        }
+
+        /**
+         * Returns true if a stored credential value matches the ciphertext format
+         * produced by encrypt_value(): strict base64 that decodes to at least 32 bytes
+         * (16-byte IV + at least one AES block).
+         *
+         * Used to tell encrypted credentials apart from plain-text values like API URLs
+         * or tokens that happen to be base64-safe strings.
+         *
+         * @param string $value The stored credential value to inspect.
+         */
+        private static function is_encrypted_value( string $value ): bool {
+            $decoded = base64_decode( $value, true );
+            return false !== $decoded && strlen( $decoded ) >= 32;
         }
     }
 }

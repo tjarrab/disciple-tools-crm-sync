@@ -75,8 +75,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
             $contact_id = absint( $request['contact_id'] );
 
             // Resolve the field key where message history is written.
+            $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
+            if ( null === $connector ) {
+                $this->output_error_page(
+                    404,
+                    __( 'Not Found', 'disciple-tools-crm-sync' ),
+                    __( 'No connector is configured for this installation.', 'disciple-tools-crm-sync' )
+                );
+                return;
+            }
+
             $raw_mapping  = get_option( 'dt_crm_sync_field_mapping', [] );
-            $target_field = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+            $target_field = $raw_mapping[ $connector->get_messages_field_key() ]['dt_key'] ?? '';
 
             if ( '' === $target_field || '__dt_note__' === $target_field || '__skip__' === $target_field ) {
                 $this->output_error_page(
@@ -84,6 +94,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
                     __( 'Not Found', 'disciple-tools-crm-sync' ),
                     __( 'No message history field is configured for this installation.', 'disciple-tools-crm-sync' )
                 );
+                return;
             }
 
             // Let DT enforce its own contact sharing / assignment rules.
@@ -94,6 +105,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
                     __( 'Access Denied', 'disciple-tools-crm-sync' ),
                     __( 'You do not have permission to view this contact.', 'disciple-tools-crm-sync' )
                 );
+                return;
             }
 
             $text = get_post_meta( $contact_id, $target_field, true );
@@ -103,6 +115,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
                     __( 'No Messages', 'disciple-tools-crm-sync' ),
                     __( 'No message history has been imported for this contact yet.', 'disciple-tools-crm-sync' )
                 );
+                return;
             }
 
             $title = sprintf(

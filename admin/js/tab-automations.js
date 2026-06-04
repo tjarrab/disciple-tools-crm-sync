@@ -146,7 +146,10 @@
                     if ( existing ) { existing.remove(); }
                     var notice    = document.createElement( 'div' );
                     notice.className = 'notice notice-error inline dt-crm-sync-create-error';
-                    notice.innerHTML = '<p>' + ( err.message || ( i18n.failed || 'Failed' ) ) + '</p>';
+                    var p = document.createElement( 'p' );
+                    // textContent keeps HTTP status text (err.message) from being interpreted as markup.
+                    p.textContent = err.message || ( i18n.failed || 'Failed' );
+                    notice.appendChild( p );
                     createForm.insertAdjacentElement( 'beforebegin', notice );
                     if ( submitBtn ) { submitBtn.disabled = false; }
                 } );
@@ -177,7 +180,9 @@
                 var notice = document.createElement( 'div' );
                 notice.className = 'notice notice-error inline';
                 notice.style.cssText = 'margin: 4px 0; padding: 6px 10px;';
-                notice.innerHTML = '<p>' + ( i18n.deleteFilterError || 'Delete failed. Check the browser console and try reloading.' ) + '</p>';
+                var p = document.createElement( 'p' );
+                p.textContent = i18n.deleteFilterError || 'Delete failed. Check the browser console and try reloading.';
+                notice.appendChild( p );
                 form.insertAdjacentElement( 'afterend', notice );
             } );
         } );

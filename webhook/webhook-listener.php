@@ -186,17 +186,25 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Webhook' ) ) {
             //
             // _trigger is read by Disciple_Tools_CRM_Sync_Processor and passed through to
             // Disciple_Tools_CRM_Sync_Logger::write() so logs correctly show 'webhook'.
-            wp_schedule_single_event(
+            //
+            // If scheduling fails we return 500 so Respond.io retries delivery
+            // rather than treating the event as successfully processed.
+            $scheduled = wp_schedule_single_event(
                 time() + 5,
                 'dt_crm_sync_process_batch',
                 [
                 [
-                    'ids'      => [ (int) $respond_id ],
-                    '_token'   => bin2hex( random_bytes( 8 ) ),
-                    '_trigger' => 'webhook',
+                    'ids'            => [ (int) $respond_id ],
+                    '_token'         => bin2hex( random_bytes( 8 ) ),
+                    '_trigger'       => 'webhook',
+                    '_skip_existing' => false,
                 ]
                 ]
             );
+
+            if ( false === $scheduled ) {
+                return new WP_REST_Response( [ 'status' => 'error', 'reason' => 'scheduling_failed' ], 500 );
+            }
 
             return new WP_REST_Response( [ 'status' => 'queued' ], 200 );
         }

@@ -102,8 +102,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Config' ) ) {
 
             // Return the cached schema without requiring valid credentials, unless
             // the caller is forcing a refresh (cache miss path also falls through).
+            // Build the transient key from the active connector slug so we read the
+            // right cache entry regardless of which connector is currently selected.
             if ( ! $is_refresh ) {
-                $cached = get_transient( Disciple_Tools_CRM_Sync_API_Client::FIELD_SCHEMA_TRANSIENT );
+                $settings    = get_option( 'dt_crm_sync_settings', [] );
+                $active_slug = sanitize_key( $settings['active_connector'] ?? '' );
+                $cached      = $active_slug ? get_transient( 'dt_crm_sync_field_schema_' . $active_slug ) : false;
                 if ( false !== $cached ) {
                     return new WP_REST_Response( $cached, 200 );
                 }
@@ -144,11 +148,15 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Config' ) ) {
 
 // Schema-drift detection (only on forced refresh)
             if ( $is_refresh ) {
+                // Cache the schema using the connector's own transient key. Connectors
+                // that handle their own caching (Respond.io) will just overwrite their
+                // existing entry; connectors that don't (Metricool) need this write to
+                // clear the "No schema loaded" gate after the first Refresh Schema click.
+                set_transient( $connector->get_schema_transient_key(), $schema, 12 * HOUR_IN_SECONDS );
                 $this->detect_schema_drift( $schema );
                 // Return a { success: true } envelope so the admin JS can detect
-                // success with `data.success`. The full schema is already written
-                // to the transient by get_field_schema(); the page reload triggered
-                // by the JS will re-render the mapping table from the transient.
+                // success with `data.success`. The page reload triggered by the JS
+                // will re-render the mapping table from the transient.
                 return new WP_REST_Response( [ 'success' => true ], 200 );
             }
 

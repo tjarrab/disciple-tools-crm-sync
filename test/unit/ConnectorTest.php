@@ -222,4 +222,18 @@ class ConnectorTest extends BrainMonkeyTestCase {
         $this->assertInstanceOf( WP_Error::class, $result );
         $this->assertSame( 'connector_misconfigured', $result->get_error_code() );
     }
+
+// Schema transient key
+
+    public function test_schema_transient_key_respond_io(): void {
+        $connector = new Disciple_Tools_CRM_Sync_Connector_Respond_IO( [] );
+
+        $this->assertSame( 'dt_crm_sync_field_schema_respond_io', $connector->get_schema_transient_key() );
+    }
+
+    public function test_schema_transient_key_metricool(): void {
+        $connector = new Disciple_Tools_CRM_Sync_Connector_Metricool( [] );
+
+        $this->assertSame( 'dt_crm_sync_field_schema_metricool', $connector->get_schema_transient_key() );
+    }
 }

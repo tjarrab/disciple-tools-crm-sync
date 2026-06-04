@@ -29,9 +29,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
          * Find a DT contact whose connector-ID meta matches $connector_id.
          *
          * @param string $connector_id The CRM contact ID to look up.
-         * @return int|false Post ID on match, false if no match.
+         * @return int|null Post ID on match, null if no match.
          */
-        public function find_by_connector_id( string $connector_id ): int|false {
+        public function find_by_connector_id( string $connector_id ): int|null {
             $posts = get_posts( [
                 'post_type'      => 'contacts',
                 'post_status'    => 'publish',
@@ -46,7 +46,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
                 ],
             ] );
 
-            return ! empty( $posts ) ? (int) $posts[0] : false;
+            return ! empty( $posts ) ? (int) $posts[0] : null;
         }
 
         /**
@@ -60,9 +60,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
          * The byte-length prefix prevents a shorter value (e.g. "12") from matching
          * inside a longer serialized string (e.g. "1234567890").
          *
-         * @return int|false Post ID on match, false if neither value produces a hit.
+         * @return int|null Post ID on match, null if neither value produces a hit.
          */
-        public function find_by_phone_or_email( string $phone, string $email ): int|false {
+        public function find_by_phone_or_email( string $phone, string $email ): int|null {
             global $wpdb;
 
             if ( ! empty( $phone ) ) {
@@ -103,7 +103,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
                 }
             }
 
-            return false;
+            return null;
         }
     }
 }

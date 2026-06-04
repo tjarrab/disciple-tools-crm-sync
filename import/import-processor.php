@@ -140,7 +140,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
 
                 $result = $this->process_single_contact( $respond_id, $trigger_type, $skip_existing );
 
-                if ( is_null( $result ) ) {
+                if ( true === $result ) {
                     // Success or intentional skip — continue to next contact.
                     continue;
                 }
@@ -154,11 +154,17 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                         // is included in the reschedule, not dropped.
                         $remaining = array_slice( $ids, $processed_count - 1 );
                         if ( ! empty( $remaining ) ) {
-                            wp_schedule_single_event(
+                            $scheduled = wp_schedule_single_event(
                                 time() + $retry_after,
                                 'dt_crm_sync_process_batch',
                                 [ [ 'ids' => $remaining, '_token' => uniqid( '', true ), '_trigger' => $trigger_type ] ]
                             );
+                            if ( false === $scheduled ) {
+                                Disciple_Tools_CRM_Sync_Logger::write(
+                                    $trigger_type, $respond_id, null, 'failed',
+                                    'Rate-limited batch could not be rescheduled — ' . count( $remaining ) . ' contact(s) will not be retried.'
+                                );
+                            }
                         }
                         break;
                     }
@@ -167,11 +173,17 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                         // Include the pending contact itself in the reschedule.
                         $remaining = array_slice( $ids, $processed_count - 1 );
                         if ( ! empty( $remaining ) ) {
-                            wp_schedule_single_event(
+                            $scheduled = wp_schedule_single_event(
                                 time() + 180,
                                 'dt_crm_sync_process_batch',
                                 [ [ 'ids' => $remaining, '_token' => uniqid( '', true ), '_trigger' => $trigger_type ] ]
                             );
+                            if ( false === $scheduled ) {
+                                Disciple_Tools_CRM_Sync_Logger::write(
+                                    $trigger_type, $respond_id, null, 'failed',
+                                    'Resource-pending batch could not be rescheduled — ' . count( $remaining ) . ' contact(s) will not be retried.'
+                                );
+                            }
                         }
                         break;
                     }
@@ -189,19 +201,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
          * Process a single contact: match or create the DT post, map fields,
          * and import message history.
          *
-         * Returns null on success or intentional skip, WP_Error on failure or
+         * Returns true on success or intentional skip, WP_Error on failure or
          * 429/449 (caller reschedules the remaining batch).
          *
          * @param string $respond_id    The Respond.io contact ID.
          * @param string $trigger_type  'scheduled', 'manual', or 'webhook'.
          * @param bool   $skip_existing When true, contacts already in DT are skipped.
-         * @return WP_Error|null
+         * @return WP_Error|bool
          */
         protected function process_single_contact(
             string $respond_id,
             string $trigger_type,
             bool $skip_existing = true
-        ): WP_Error|null {
+        ): WP_Error|bool {
             try {
                 // Check by connector ID meta first — fastest path.
                 $dt_post_id = $this->matcher->find_by_connector_id( $respond_id );
@@ -214,7 +226,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                     Disciple_Tools_CRM_Sync_Logger::write(
                         $trigger_type, $respond_id, $dt_post_id, 'skipped', 'skip_existing'
                     );
-                    return null;
+                    return true;
                 }
 
                 $profile = $this->connector->get_contact( $respond_id );
@@ -244,15 +256,27 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 if ( ! empty( $profile['id'] ) && (string) $profile['id'] !== (string) $respond_id ) {
                     $canonical_id         = (string) $profile['id'];
                     $canonical_dt_post_id = $this->matcher->find_by_connector_id( $canonical_id );
+                    $meta_key             = $this->connector->get_meta_key_prefix() . 'id';
 
                     if ( $canonical_dt_post_id && $dt_post_id && $canonical_dt_post_id !== $dt_post_id ) {
-                        // Canonical contact already exists in DT, sync to it instead.
+                        // Both posts already exist. Drop the connector-ID meta from the abandoned
+                        // post so future polls don't route back to it, then switch to the canonical.
+                        $old_dt_post_id = $dt_post_id;
+                        delete_post_meta( $old_dt_post_id, $meta_key );
                         $dt_post_id = $canonical_dt_post_id;
                         $action     = 'update';
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $canonical_id, $canonical_dt_post_id, 'merged',
+                            sprintf( 'absorbed: %s (post %d unreferenced)', $respond_id, $old_dt_post_id )
+                        );
                     } elseif ( $dt_post_id ) {
-                        // Old one exists, canonical doesn't. Replace ID meta.
-                        update_post_meta( $dt_post_id, '_respond_io_id', sanitize_text_field( $canonical_id ) );
+                        // Old post exists, canonical doesn't yet. Repoint the meta to the new ID.
+                        update_post_meta( $dt_post_id, $meta_key, sanitize_text_field( $canonical_id ) );
                         $action = 'update';
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $canonical_id, $dt_post_id, 'merged',
+                            sprintf( 'absorbed: %s', $respond_id )
+                        );
                     }
                     $respond_id = $canonical_id;
                 }
@@ -290,11 +314,27 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 // (find_existing_post() checks meta, not phone/email), so write it
                 // now so subsequent polls use the fast indexed meta lookup instead
                 // of the expensive LIKE query.
+                //
+                // If the meta write fails we bail here rather than continuing —
+                // completing the import against a post with no connector ID means
+                // the next run will create a duplicate instead of updating it.
                 if ( 'create' === $action ) {
-                    $dt_post_id = (int) $result['ID'];
-                    add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
+                    $dt_post_id   = (int) $result['ID'];
+                    $meta_saved   = add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
+                    if ( false === $meta_saved ) {
+                        return new WP_Error(
+                            'meta_write_failed',
+                            sprintf( 'Connector ID meta could not be written for new DT post %d (connector ID: %s).', $dt_post_id, $respond_id )
+                        );
+                    }
                 } elseif ( ! get_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', true ) ) {
-                    add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
+                    $meta_saved = add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
+                    if ( false === $meta_saved ) {
+                        return new WP_Error(
+                            'meta_write_failed',
+                            sprintf( 'Connector ID meta could not be written for existing DT post %d (connector ID: %s).', $dt_post_id, $respond_id )
+                        );
+                    }
                 }
 
                 // Upsert activity-feed note for mapped fields.
@@ -303,13 +343,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                     $this->activity_feed_writer->upsert(
                         $dt_post_id,
                         $activity_fields,
-                        $this->connector->get_meta_key_prefix()
+                        $this->connector->get_meta_key_prefix(),
+                        $this->connector->get_label()
                     );
                 }
 
                 // Import message history.
                 $msg_target = $this->mapper->get_message_history_target();
-                $msg_error  = $this->message_importer->import( $respond_id, $dt_post_id, 0, $msg_target );
+                $msg_error  = $this->message_importer->import( $respond_id, $dt_post_id, 0, $msg_target, $trigger_type );
                 if ( is_wp_error( $msg_error ) ) {
                     // Propagate 429 / 449 for batch rescheduling.
                     return $msg_error;
@@ -319,7 +360,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                     $trigger_type, $respond_id, $dt_post_id, 'success', $action
                 );
 
-                return null;
+                return true;
 
             } catch ( \Throwable $e ) {
                 Disciple_Tools_CRM_Sync_Logger::write(

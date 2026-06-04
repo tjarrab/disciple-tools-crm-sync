@@ -79,10 +79,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
          * Returns the filter parameter field definitions exposed in the filter-creation UI.
          *
          * Three fields are supported: a free-text search query, a tag filter, and a
-         * lifecycle filter. Tag and lifecycle share the same exclusive_group value so
-         * the UI knows to clear one when the other is filled in — only one can be sent
-         * per request. Both are translated into Respond.io API filter conditions in
-         * get_contacts().
+         * lifecycle filter. Tag and lifecycle share an exclusive_group so the UI clears
+         * one when the other is filled in — only one can be sent per request. The group
+         * name is prefixed with the connector slug to avoid collisions if a second
+         * connector happens to define a group with the same bare name. Both fields are
+         * translated into Respond.io API filter conditions in get_contacts().
          *
          * @return array
          */
@@ -97,7 +98,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'slug'            => 'tag',
                     'label'           => __( 'Tag', 'disciple-tools-crm-sync' ),
                     'type'            => 'text',
-                    'exclusive_group' => 'contact_filter',
+                    'exclusive_group' => 'respond_io_contact_filter',
                     'group_label'     => __( 'Contact Filter', 'disciple-tools-crm-sync' ),
                 ],
                 [
@@ -105,7 +106,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'label'           => __( 'Lifecycle', 'disciple-tools-crm-sync' ),
                     'type'            => 'text',
                     'description'     => __( 'e.g. F2F Ready', 'disciple-tools-crm-sync' ),
-                    'exclusive_group' => 'contact_filter',
+                    'exclusive_group' => 'respond_io_contact_filter',
                 ],
             ];
         }
@@ -152,6 +153,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'type'        => 'text',
                     '__synthetic' => true,
                 ],
+            ];
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * Lifecycle sits at the top level of the Respond.io contact object,
+         * not inside `custom_fields`, so we pull it out here.
+         */
+        public function get_synthetic_field_values( array $profile ): array {
+            return [
+                [ 'name' => 'Lifecycle', 'value' => $profile['lifecycle'] ?? null ],
             ];
         }
 

@@ -34,14 +34,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
             $notice = '';
 
 // POST handler — must run before any HTML output
-            // Dispatch on nonce-field presence so nonce verification runs before
-            // any $_POST value is used to drive the code path.
             if ( isset( $_POST['dt_crm_sync_automations_nonce'] ) ) {
-                check_admin_referer( 'dt_crm_sync_save_filter', 'dt_crm_sync_automations_nonce' );
-
                 if ( ! current_user_can( 'manage_dt' ) ) {
                     wp_die( esc_html__( 'You do not have permission to perform this action.', 'disciple-tools-crm-sync' ) );
                 }
+
+                check_admin_referer( 'dt_crm_sync_save_filter', 'dt_crm_sync_automations_nonce' );
 
                 $name      = sanitize_text_field( wp_unslash( $_POST['filter_name'] ?? '' ) );
                 $interval  = sanitize_key( wp_unslash( $_POST['interval'] ?? 'daily' ) );
@@ -74,13 +72,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                     $notice    = 'filter_created';
                 }
             } elseif ( isset( $_POST['dt_crm_sync_delete_nonce'] ) ) {
-                // Nonce verification must precede any $_POST access.
-                // The action is a fixed string so it does not depend on user-supplied input.
-                check_admin_referer( 'dt_crm_sync_delete_filter', 'dt_crm_sync_delete_nonce' );
-
                 if ( ! current_user_can( 'manage_dt' ) ) {
                     wp_die( esc_html__( 'You do not have permission to perform this action.', 'disciple-tools-crm-sync' ) );
                 }
+
+                check_admin_referer( 'dt_crm_sync_delete_filter', 'dt_crm_sync_delete_nonce' );
 
                 $filter_id = sanitize_key( wp_unslash( $_POST['filter_id'] ?? '' ) );
 
@@ -93,6 +89,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
 
                 wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
                 wp_clear_scheduled_hook( 'dt_crm_sync_poll_' . $filter_id ); // legacy
+                delete_transient( 'dt_crm_sync_poll_lock_' . $filter_id );
                 delete_option( 'dt_crm_sync_saved_filter_' . $filter_id );
 
                 $manifest = array_values( array_filter( $manifest, fn( $id ) => $id !== $filter_id ) );

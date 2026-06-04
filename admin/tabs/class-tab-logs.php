@@ -43,11 +43,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Logs' ) ) {
             // Dispatch on nonce-field presence so nonce verification runs before
             // any $_POST value is used to drive the code path.
             if ( isset( $_POST['dt_crm_sync_clear_logs_nonce'] ) ) {
-                check_admin_referer( 'dt_crm_sync_clear_logs', 'dt_crm_sync_clear_logs_nonce' );
-
                 if ( ! current_user_can( 'manage_dt' ) ) {
                     wp_die( esc_html__( 'You do not have permission to perform this action.', 'disciple-tools-crm-sync' ) );
                 }
+
+                check_admin_referer( 'dt_crm_sync_clear_logs', 'dt_crm_sync_clear_logs_nonce' );
 
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $table is a trusted constant built from $wpdb->prefix.
                 $wpdb->query( "DELETE FROM `{$table}`" );
@@ -55,18 +55,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Logs' ) ) {
             }
 
             if ( isset( $_POST['dt_crm_sync_clear_translation_logs_nonce'] ) ) {
-                check_admin_referer( 'dt_crm_sync_clear_translation_logs', 'dt_crm_sync_clear_translation_logs_nonce' );
-
                 if ( ! current_user_can( 'manage_dt' ) ) {
                     wp_die( esc_html__( 'You do not have permission to perform this action.', 'disciple-tools-crm-sync' ) );
                 }
+
+                check_admin_referer( 'dt_crm_sync_clear_translation_logs', 'dt_crm_sync_clear_translation_logs_nonce' );
 
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.NotPrepared,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $t_table is a trusted constant built from $wpdb->prefix.
                 $wpdb->query( "DELETE FROM `{$t_table}`" );
                 $t_notice = 'cleared';
             }
 
-            $valid_statuses = [ 'success', 'failed', 'merged', 'skipped' ];
+            $valid_statuses = [ 'success', 'failed', 'merged', 'skipped', 'warning' ];
             $status_filter  = sanitize_key( wp_unslash( $_GET['log_status'] ?? '' ) );
             if ( ! in_array( $status_filter, $valid_statuses, true ) ) {
                 $status_filter = '';
@@ -141,6 +141,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Logs' ) ) {
                         'failed'  => __( 'Failed', 'disciple-tools-crm-sync' ),
                         'merged'  => __( 'Merged', 'disciple-tools-crm-sync' ),
                         'skipped' => __( 'Skipped', 'disciple-tools-crm-sync' ),
+                        'warning' => __( 'Warning', 'disciple-tools-crm-sync' ),
                     ];
                     foreach ( $valid_statuses as $s ) : ?>
                         <option value="<?php echo esc_attr( $s ); ?>" <?php selected( $status_filter, $s ); ?>>
@@ -181,7 +182,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Logs' ) ) {
                             <tr>
                                 <td><?php echo esc_html( $row->created_at ); ?></td>
                                 <td><?php echo esc_html( $row->trigger_type ); ?></td>
-                                <td><?php echo esc_html( $row->respond_id ); ?></td>
+                                <td><?php echo esc_html( $row->contact_id ); ?></td>
                                 <td>
                                     <?php if ( $dt_post_id > 0 && $dt_link ) : ?>
                                         <a href="<?php echo esc_url( $dt_link ); ?>"><?php echo esc_html( (string) $dt_post_id ); ?></a>
@@ -348,7 +349,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Logs' ) ) {
                         <?php foreach ( $t_rows as $row ) : ?>
                             <tr>
                                 <td><?php echo esc_html( $row->created_at ); ?></td>
-                                <td><?php echo esc_html( $row->respond_id ); ?></td>
+                                <td><?php echo esc_html( $row->contact_id ); ?></td>
                                 <td><?php echo esc_html( $row->status ); ?></td>
                                 <td><?php echo $row->http_status !== null ? esc_html( (string) $row->http_status ) : '&mdash;'; ?></td>
                                 <td><?php echo ! empty( $row->response_preview ) ? esc_html( $row->response_preview ) : '&mdash;'; ?></td>

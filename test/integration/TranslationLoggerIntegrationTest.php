@@ -58,7 +58,7 @@ class TranslationLoggerIntegrationTest extends TestCase {
         Disciple_Tools_CRM_Sync_Translation_Logger::write( 'rid_123', 200, '{"candidates":[{"c', 'success', null );
         $row = $this->last_log_row();
 
-        $this->assertSame( 'rid_123', $row->respond_id );
+        $this->assertSame( 'rid_123', $row->contact_id );
         $this->assertSame( 200, (int) $row->http_status );
         $this->assertSame( '{"candidates":[{"c', $row->response_preview );
         $this->assertSame( 'success', $row->status );
@@ -161,14 +161,14 @@ class TranslationLoggerIntegrationTest extends TestCase {
         $this->assertNotEmpty( $indexes, 'Index idx_status should exist on dt_crm_sync_translation_logs table.' );
     }
 
-    public function test_respond_id_index_exists(): void {
+    public function test_contact_id_index_exists(): void {
         global $wpdb;
         $table = $wpdb->prefix . 'dt_crm_sync_translation_logs';
 
         // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Test assertion for index existence.
-        $indexes = $wpdb->get_results( "SHOW INDEX FROM `{$table}` WHERE Key_name = 'idx_respond_id'" );
+        $indexes = $wpdb->get_results( "SHOW INDEX FROM `{$table}` WHERE Key_name = 'idx_contact_id'" );
 
-        $this->assertNotEmpty( $indexes, 'Index idx_respond_id should exist on dt_crm_sync_translation_logs table.' );
+        $this->assertNotEmpty( $indexes, 'Index idx_contact_id should exist on dt_crm_sync_translation_logs table.' );
     }
 
     public function test_created_at_index_exists(): void {

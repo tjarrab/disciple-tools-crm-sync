@@ -226,7 +226,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_API_Client' ) ) {
             ];
 
             $query_params = [ 'limit' => $limit ];
-            if ( ! empty( $cursor_id ) ) {
+            if ( null !== $cursor_id ) {
                 $query_params['cursorId'] = $cursor_id;
             }
 
@@ -237,8 +237,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_API_Client' ) ) {
 
             // Normalise response keys:
             //   API returns 'items'            → callers expect 'data'
-            //   API returns 'pagination.next'  → callers expect 'cursor.next' (int ID)
-            // Extract the cursorId integer from the 'pagination.next' full URL.
+            //   API returns 'pagination.next'  → callers expect 'cursor.next' (numeric string)
+            // Extract the cursorId from the 'pagination.next' full URL and keep it as a
+            // string. Casting to (int) would silently truncate 64-bit cursor values that
+            // exceed PHP_INT_MAX, causing the paginator to re-request the same page.
             $next_cursor = null;
             $next_url    = $raw['pagination']['next'] ?? null;
             if ( ! empty( $next_url ) ) {
@@ -246,7 +248,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_API_Client' ) ) {
                 if ( $query_string ) {
                     parse_str( $query_string, $parsed );
                     $raw_cursor  = $parsed['cursorId'] ?? null;
-                    $next_cursor = is_numeric( $raw_cursor ) ? (int) $raw_cursor : null;
+                    $next_cursor = is_numeric( $raw_cursor ) ? (string) $raw_cursor : null;
                 }
             }
 
@@ -327,7 +329,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_API_Client' ) ) {
 
             // Normalise response keys (same pattern as get_contacts()):
             //   API returns 'items'            → callers expect 'data'
-            //   API returns 'pagination.next'  → callers expect 'cursor.next' (int ID)
+            //   API returns 'pagination.next'  → callers expect 'cursor.next' (numeric string)
+            // Keep the cursor as a string — see get_contacts() for the reasoning.
             $next_cursor = null;
             $next_url    = $raw['pagination']['next'] ?? null;
             if ( ! empty( $next_url ) ) {
@@ -335,7 +338,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_API_Client' ) ) {
                 if ( $query_string ) {
                     parse_str( $query_string, $parsed );
                     $raw_cursor  = $parsed['cursorId'] ?? null;
-                    $next_cursor = is_numeric( $raw_cursor ) ? (int) $raw_cursor : null;
+                    $next_cursor = is_numeric( $raw_cursor ) ? (string) $raw_cursor : null;
                 }
             }
 

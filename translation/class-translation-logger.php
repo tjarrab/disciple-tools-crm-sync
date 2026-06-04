@@ -14,14 +14,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Logger' ) ) {
         /**
          * Write a single row to the translation log table.
          *
-         * @param string      $respond_id       Respond.io contact ID.
+         * @param string      $contact_id       Contact ID from the active connector, stored for traceability.
          * @param int|null    $http_status      HTTP status code from the AI provider (null = no API call made).
          * @param string|null $response_preview First 20 characters of the raw API response body.
          * @param string      $status           Outcome: 'success' | 'failed' | 'rate_limited'
          * @param string|null $error_message    Optional error detail.
          */
         public static function write(
-            string $respond_id,
+            string $contact_id,
             ?int $http_status,
             ?string $response_preview,
             string $status,
@@ -34,7 +34,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Logger' ) ) {
                 $wpdb->prefix . 'dt_crm_sync_translation_logs',
                 [
                     'created_at'       => gmdate( 'Y-m-d H:i:s' ),
-                    'respond_id'       => $respond_id,
+                    'contact_id'       => $contact_id,
                     'http_status'      => $http_status,
                     'response_preview' => $response_preview !== null ? substr( $response_preview, 0, 20 ) : null,
                     'status'           => $status,
@@ -42,7 +42,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Logger' ) ) {
                 ],
                 [
                     '%s', // created_at
-                    '%s', // respond_id
+                    '%s', // contact_id
                     '%d', // http_status — $wpdb inserts SQL NULL for PHP null (WP 6.0+)
                     '%s', // response_preview
                     '%s', // status
@@ -67,14 +67,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Logger' ) ) {
             $sql = "CREATE TABLE $table (
             id               BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             created_at       DATETIME        NOT NULL,
-            respond_id       VARCHAR(64)     NOT NULL DEFAULT '',
+            contact_id       VARCHAR(64)     NOT NULL DEFAULT '',
             http_status      SMALLINT UNSIGNED        DEFAULT NULL,
             response_preview VARCHAR(20)              DEFAULT NULL,
             status           VARCHAR(16)     NOT NULL DEFAULT '',
             error_message    TEXT                     DEFAULT NULL,
             PRIMARY KEY  (id),
             KEY idx_status     (status),
-            KEY idx_respond_id (respond_id),
+            KEY idx_contact_id (contact_id),
             KEY idx_created_at (created_at)
         ) $charset;";
 

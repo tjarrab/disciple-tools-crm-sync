@@ -34,7 +34,7 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
 
         $result = $this->matcher->find_by_connector_id( '999' );
 
-        $this->assertFalse( $result );
+        $this->assertNull( $result );
     }
 
 // find_by_phone_or_email
@@ -81,7 +81,7 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
     public function test_find_by_phone_or_email_empty(): void {
         $result = $this->matcher->find_by_phone_or_email( '', '' );
 
-        $this->assertFalse( $result );
+        $this->assertNull( $result );
     }
 
 // SQL wildcard escaping

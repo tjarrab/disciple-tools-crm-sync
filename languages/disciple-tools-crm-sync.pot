@@ -127,20 +127,23 @@ msgstr ""
 msgid "Field Mapping"
 msgstr ""
 
-#: admin/admin-menu-and-tabs.php:401
-msgid "Field Mapping controls how Respond.io custom fields are written into Disciple.Tools contact fields during every import (manual, scheduled, and webhook)."
+#. translators: %s: connector name, e.g. "Respond.io"
+#: admin/tabs/class-tab-config.php
+msgid "Field Mapping controls how %s custom fields are written into Disciple.Tools contact fields during every import (manual, scheduled, and webhook)."
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:403
 msgid "How to use:"
 msgstr ""
 
-#: admin/admin-menu-and-tabs.php:405
-msgid "Save your API credentials above, then click \"Refresh Schema\" to fetch your Respond.io custom field list."
+#. translators: %s: connector name, e.g. "Respond.io"
+#: admin/tabs/class-tab-config.php
+msgid "Save your API credentials above, then click \"Refresh Schema\" to fetch your %s custom field list."
 msgstr ""
 
-#: admin/admin-menu-and-tabs.php:406
-msgid "The table below shows each Respond.io custom field on the left. Use the dropdown on the right to choose the DT contact field it should populate."
+#. translators: %s: connector name, e.g. "Respond.io"
+#: admin/tabs/class-tab-config.php
+msgid "The table below shows each %s custom field on the left. Use the dropdown on the right to choose the DT contact field it should populate."
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:407
@@ -151,8 +154,9 @@ msgstr ""
 msgid "Click \"Save Settings\" at the bottom of this page to store your choices."
 msgstr ""
 
-#: admin/admin-menu-and-tabs.php:411
-msgid "Note: if you rename or delete a custom field in Respond.io, its mapping entry will be flagged as broken the next time you click \"Refresh Schema\". Re-save this page after adding a replacement mapping to clear the warning."
+#. translators: %s: connector name, e.g. "Respond.io"
+#: admin/tabs/class-tab-config.php
+msgid "Note: if you rename or delete a custom field in %s, its mapping entry will be flagged as broken the next time you click \"Refresh Schema\". Re-save this page after adding a replacement mapping to clear the warning."
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:415
@@ -164,11 +168,11 @@ msgid "Uninstall Behaviour"
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:425
-msgid "Delete all Respond.io metadata from DT contacts when uninstalling"
+msgid "Delete all CRM sync contact metadata from DT contacts when uninstalling"
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:428
-msgid "When checked, uninstalling the plugin will permanently delete the following data from all DT contacts: _respond_io_id, _respond_io_merged_ids, _respond_io_last_sync (post meta) and _respond_io_message_id (comment meta)."
+msgid "When checked, uninstalling the plugin will permanently delete the following data from all DT contacts: _respond_io_id, _respond_io_merged_ids, _respond_io_last_sync, _respond_io_notes_comment_id, _respond_io_message_log_comment_id (Respond.io post meta); _metricool_id, _metricool_merged_ids, _metricool_last_sync, _metricool_notes_comment_id, _metricool_message_log_comment_id (Metricool post meta); and all comment meta with a _respond_io_ or _metricool_ prefix."
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:431
@@ -209,12 +213,14 @@ msgstr ""
 msgid "Refresh failed"
 msgstr ""
 
-#: admin/admin-menu-and-tabs.php:569
-msgid "No schema loaded. Save credentials then click \"Refresh Schema\" to fetch Respond.io custom field definitions."
+#. translators: %s: connector name, e.g. "Respond.io"
+#: admin/tabs/class-tab-config.php
+msgid "No schema loaded. Save credentials then click \"Refresh Schema\" to fetch %s custom field definitions."
 msgstr ""
 
-#: admin/admin-menu-and-tabs.php:585
-msgid "No custom fields found in the Respond.io schema."
+#. translators: %s: connector name, e.g. "Respond.io"
+#: admin/tabs/class-tab-config.php
+msgid "No custom fields found in the %s schema."
 msgstr ""
 
 #: admin/admin-menu-and-tabs.php:626

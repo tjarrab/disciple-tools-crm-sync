@@ -49,18 +49,32 @@ class TestableProcessor extends Disciple_Tools_CRM_Sync_Processor {
         $this->message_importer = $message_importer;
     }
 
+    /** Allow tests to inject an ActivityFeedWriter. */
+    public function set_activity_feed_writer( Disciple_Tools_CRM_Sync_Activity_Feed_Writer $writer ): void {
+        $this->activity_feed_writer = $writer;
+    }
+
     /** Expose the message importer that process_batch() built, so tests can inspect its wiring. */
     public function get_message_importer(): ?Disciple_Tools_CRM_Sync_Message_Importer {
         return $this->message_importer;
     }
 
-    /** Expose sideload() via the sideloader within the message importer for direct testing. */
+    /** Sideloader instance kept between expose_sideload_attachment() and expose_sideload_last_error(). */
+    private Disciple_Tools_CRM_Sync_Media_Sideloader $last_sideloader;
+
+    /** Runs sideload() and retains the sideloader so last_error can be read afterward. */
     public function expose_sideload_attachment( string $url, int $post_id ): string {
-        return ( new Disciple_Tools_CRM_Sync_Media_Sideloader() )->sideload( $url, $post_id );
+        $this->last_sideloader = new Disciple_Tools_CRM_Sync_Media_Sideloader();
+        return $this->last_sideloader->sideload( $url, $post_id );
+    }
+
+    /** Returns the failure reason set by the most recent expose_sideload_attachment() call. */
+    public function expose_sideload_last_error(): ?string {
+        return $this->last_sideloader->get_last_error();
     }
 
     /** Expose process_single_contact() as public for direct testing. */
-    public function expose_process_single_contact( string $respond_id, string $trigger_type, bool $skip_existing = true ): WP_Error|null {
+    public function expose_process_single_contact( string $respond_id, string $trigger_type, bool $skip_existing = true ): WP_Error|bool {
         return $this->process_single_contact( $respond_id, $trigger_type, $skip_existing );
     }
 
@@ -72,9 +86,11 @@ class TestableProcessor extends Disciple_Tools_CRM_Sync_Processor {
      */
     public $process_single_contact_fn = null;
 
-    protected function process_single_contact( string $respond_id, string $trigger_type, bool $skip_existing = true ): WP_Error|null {
+    protected function process_single_contact( string $respond_id, string $trigger_type, bool $skip_existing = true ): WP_Error|bool {
         if ( null !== $this->process_single_contact_fn ) {
-            return ( $this->process_single_contact_fn )( $respond_id, $trigger_type );
+            // Callbacks return WP_Error|null; null means success — coerce to true
+            // to match the parent's WP_Error|bool contract.
+            return ( $this->process_single_contact_fn )( $respond_id, $trigger_type ) ?? true;
         }
         return parent::process_single_contact( $respond_id, $trigger_type, $skip_existing );
     }
@@ -281,6 +297,7 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
         $result = $this->processor->expose_sideload_attachment( $url, 1 );
 
         $this->assertSame( $url, $result, 'Non-allowlisted host should be returned unchanged.' );
+        $this->assertStringStartsWith( 'ssrf_blocked:', $this->processor->expose_sideload_last_error() );
     }
 
     public function test_sideload_attachment_routes_image_url_to_media_sideload_image(): void {
@@ -290,7 +307,9 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
                 : $value
         );
         Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
-        Functions\when( 'media_sideload_image' )->justReturn( 'https://local.test/wp-content/uploads/img.jpg' );
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'media_sideload_image' )->justReturn( 9 );
+        Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/img.jpg' );
 
         $result = $this->processor->expose_sideload_attachment( 'https://cdn.respond.io/img.jpg', 1 );
 
@@ -304,12 +323,49 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
                 : $value
         );
         Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
         Functions\when( 'media_sideload_image' )->justReturn( new WP_Error( 'sideload_failed', 'Could not sideload' ) );
 
         $url    = 'https://cdn.respond.io/img.png';
         $result = $this->processor->expose_sideload_attachment( $url, 1 );
 
         $this->assertSame( $url, $result, 'Original URL must be returned when media_sideload_image fails.' );
+        $this->assertStringStartsWith( 'image_wp_error:', $this->processor->expose_sideload_last_error() );
+    }
+
+    public function test_sideload_download_url_failure_sets_last_error(): void {
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_sideload_allowed_hosts' === $hook
+                ? [ 'cdn.respond.io', 'storage.respond.io' ]
+                : $value
+        );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'download_url' )->justReturn( new WP_Error( 'http_request_failed', 'Connection timed out' ) );
+
+        $url    = 'https://cdn.respond.io/doc.pdf';
+        $result = $this->processor->expose_sideload_attachment( $url, 1 );
+
+        $this->assertSame( $url, $result, 'Original URL must be returned when download_url fails.' );
+        $this->assertStringStartsWith( 'download_failed:', $this->processor->expose_sideload_last_error() );
+    }
+
+    public function test_sideload_handle_sideload_failure_sets_last_error(): void {
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_sideload_allowed_hosts' === $hook
+                ? [ 'cdn.respond.io', 'storage.respond.io' ]
+                : $value
+        );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'download_url' )->justReturn( '/tmp/crm-sync-tmp.pdf' );
+        Functions\when( 'media_handle_sideload' )->justReturn( new WP_Error( 'upload_error', 'File type not permitted' ) );
+
+        $url    = 'https://cdn.respond.io/doc.pdf';
+        $result = $this->processor->expose_sideload_attachment( $url, 1 );
+
+        $this->assertSame( $url, $result, 'Original URL must be returned when media_handle_sideload fails.' );
+        $this->assertStringStartsWith( 'attach_wp_error:', $this->processor->expose_sideload_last_error() );
     }
 
     public function test_sideload_attachment_routes_non_image_through_download_url(): void {
@@ -319,6 +375,7 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
                 : $value
         );
         Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
         Functions\when( 'download_url' )->justReturn( '/nonexistent/tmp/file.pdf' );
         Functions\when( 'media_handle_sideload' )->justReturn( 9 );
         Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/file.pdf' );
@@ -356,6 +413,109 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
 
         $this->assertInstanceOf( WP_Error::class, $result );
         $this->assertSame( 'dt_write_failed', $result->get_error_code() );
+    }
+
+// Merged contact handling
+
+    /**
+     * When both the stale post and the canonical post already exist in DT, the
+     * connector-ID meta on the abandoned post must be removed so future polls
+     * don't keep routing to it. A 'merged' log entry must also be written.
+     */
+    public function test_process_contact_merge_canonical_exists_clears_stale_meta_and_logs(): void {
+        // First get_posts call → stale post (10). Second → canonical post (20).
+        $get_posts_call = 0;
+        Functions\when( 'get_posts' )->alias( function () use ( &$get_posts_call ) {
+            $get_posts_call++;
+            return 1 === $get_posts_call ? [ 10 ] : [ 20 ];
+        } );
+
+        // Profile returns a different ID — signals a CRM-side merge.
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"id":"canonical_id","firstName":"Test","email":"t@example.com"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        // get_post_meta: return the canonical ID so the post-write meta guard
+        // sees it as already written and skips add_post_meta.
+        Functions\when( 'get_post_meta' )->justReturn( 'canonical_id' );
+
+        $deleted_meta = [];
+        Functions\when( 'delete_post_meta' )->alias( function ( $post_id, $key ) use ( &$deleted_meta ) {
+            $deleted_meta[] = [ 'post_id' => $post_id, 'key' => $key ];
+            return true;
+        } );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $this->processor->expose_process_single_contact( 'stale_id', 'scheduled', false );
+
+        // Stale post's connector meta must have been deleted.
+        $this->assertNotEmpty( $deleted_meta, 'delete_post_meta() must be called to clear the stale connector ID.' );
+        $this->assertSame( 10, $deleted_meta[0]['post_id'], 'The stale post (10) must be dereferenced, not the canonical.' );
+        $this->assertStringContainsString( 'id', $deleted_meta[0]['key'], 'The connector-ID meta key must be deleted.' );
+
+        // A 'merged' log entry must have been written.
+        global $wpdb;
+        $merged_rows = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => ( $c['data']['status'] ?? '' ) === 'merged'
+        );
+        $this->assertNotEmpty( $merged_rows, 'A merged log entry must be written.' );
+        $merged = array_values( $merged_rows )[0]['data'];
+        $this->assertStringContainsString( 'stale_id', $merged['message'], 'Merge log must reference the absorbed (stale) contact ID.' );
+    }
+
+    /**
+     * When only the stale post exists (canonical not yet in DT), the meta is
+     * repointed to the new ID on the same post — no post is abandoned so
+     * delete_post_meta() must not be called. A 'merged' log entry must still fire.
+     */
+    public function test_process_contact_merge_no_canonical_post_logs_merge(): void {
+        // First get_posts call → stale post (10). Second → no canonical post.
+        $get_posts_call = 0;
+        Functions\when( 'get_posts' )->alias( function () use ( &$get_posts_call ) {
+            $get_posts_call++;
+            return 1 === $get_posts_call ? [ 10 ] : [];
+        } );
+
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"id":"canonical_id","firstName":"Test","email":"t@example.com"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        Functions\when( 'get_post_meta' )->justReturn( 'canonical_id' );
+
+        $delete_called = false;
+        Functions\when( 'delete_post_meta' )->alias( function () use ( &$delete_called ) {
+            $delete_called = true;
+            return true;
+        } );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $this->processor->expose_process_single_contact( 'stale_id', 'scheduled', false );
+
+        $this->assertFalse( $delete_called, 'delete_post_meta() must not be called when only one post exists.' );
+
+        global $wpdb;
+        $merged_rows = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => ( $c['data']['status'] ?? '' ) === 'merged'
+        );
+        $this->assertNotEmpty( $merged_rows, 'A merged log entry must be written even when no canonical post existed.' );
+        $merged = array_values( $merged_rows )[0]['data'];
+        $this->assertStringContainsString( 'stale_id', $merged['message'], 'Merge log must reference the absorbed (stale) contact ID.' );
     }
 
 // Translation service wiring

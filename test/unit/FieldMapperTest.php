@@ -164,4 +164,69 @@ class FieldMapperTest extends BrainMonkeyTestCase {
 
         $this->assertSame( 'notes_for_dt', $this->mapper->get_message_history_target() );
     }
+
+// Synthetic field value delegation
+
+    public function test_map_custom_fields_picks_up_synthetic_lifecycle_value(): void {
+        // Lifecycle is a top-level profile field on Respond.io, not inside custom_fields.
+        // The mapper should get it via the connector rather than building it inline.
+        // sanitize_key is mocked with returnArg(), so 'Lifecycle' stays 'Lifecycle'.
+        Functions\when( 'get_option' )->justReturn( [
+            'Lifecycle' => [ 'dt_key' => 'dt_lifecycle', 'dt_type' => 'text' ],
+        ] );
+
+        $fields = $this->mapper->map_custom_fields( [
+            'lifecycle'     => 'Active',
+            'custom_fields' => [],
+        ] );
+
+        $this->assertArrayHasKey( 'dt_lifecycle', $fields );
+        $this->assertSame( 'Active', $fields['dt_lifecycle'] );
+    }
+
+    public function test_map_custom_fields_handles_connector_with_no_synthetic_fields(): void {
+        // A connector that returns no synthetic fields should not cause either method to crash.
+        $stub = new class() extends Disciple_Tools_CRM_Sync_Abstract_Connector {
+            public function __construct() {}
+            public function get_slug(): string { return 'stub'; }
+            public function get_label(): string { return 'Stub'; }
+            public function get_credential_fields(): array { return []; }
+            public function get_dt_source_slug(): string { return 'stub'; }
+            public function get_dt_source_label(): string { return 'Stub'; }
+            public function get_meta_key_prefix(): string { return '_stub_'; }
+            public function test_connection(): bool|\WP_Error { return true; }
+            public function get_field_schema(): array|\WP_Error { return []; }
+            public function get_contacts( array $filter_params, ?string $cursor = null, int $limit = 50 ): array|\WP_Error { return []; }
+            public function get_contact( string $id ): array|\WP_Error { return []; }
+            public function get_filter_fields(): array { return []; }
+        };
+
+        $mapper = new Disciple_Tools_CRM_Sync_Field_Mapper( $stub );
+
+        Functions\when( 'get_option' )->justReturn( [
+            'some_field' => [ 'dt_key' => 'dt_some', 'dt_type' => 'text' ],
+        ] );
+
+        // No synthetic fields from the connector — only whatever is in custom_fields.
+        $fields = $mapper->map_custom_fields( [
+            'custom_fields' => [ [ 'name' => 'some_field', 'value' => 'hello' ] ],
+        ] );
+
+        $this->assertArrayHasKey( 'dt_some', $fields );
+        $this->assertSame( 'hello', $fields['dt_some'] );
+    }
+
+    public function test_get_activity_feed_fields_picks_up_synthetic_lifecycle_value(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'Lifecycle' => [ 'dt_key' => '__activity_feed__', 'dt_type' => 'text' ],
+        ] );
+
+        $activity = $this->mapper->get_activity_feed_fields( [
+            'lifecycle'     => 'Closed',
+            'custom_fields' => [],
+        ] );
+
+        $this->assertArrayHasKey( 'Lifecycle', $activity );
+        $this->assertSame( 'Closed', $activity['Lifecycle'] );
+    }
 }

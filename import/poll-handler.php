@@ -20,6 +20,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
          * into 25-contact batches, and schedules a dt_crm_sync_process_batch WP-Cron
          * event per chunk. All log entries use trigger_type 'scheduled'.
          *
+         * A per-filter transient lock prevents overlapping executions. If a previous
+         * run is still in progress when the next cron tick fires, the duplicate is
+         * logged as skipped and exits immediately -- the in-flight run is unaffected.
+         *
          * @param string $filter_id The sanitized filter ID from the manifest.
          */
         public function run_poll( string $filter_id ): void {
@@ -59,100 +63,155 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
 
             $skip_existing = $envelope['skip_existing'] ?? true;
 
-// Resolve the connector
-            $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
+// Concurrency lock -- one execution per filter at a time
+            // The lock value is the acquisition timestamp so it's easy to inspect if
+            // something went wrong. TTL is double the PHP execution ceiling (300s) so
+            // the transient self-expires well before the shortest recurrence window
+            // (2 hours) even if a hard crash prevents the finally block from running.
+            $lock_key = 'dt_crm_sync_poll_lock_' . $filter_id;
 
-            if ( null === $connector ) {
-                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'failed', 'No connector configured or credentials could not be decrypted.' );
+            if ( false !== get_transient( $lock_key ) ) {
+                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'skipped', 'Previous poll still running. Skipped to avoid duplicate imports.' );
                 return;
             }
 
-            Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'running', 'Poll started.' );
+            set_transient( $lock_key, time(), 600 );
+
+            try {
+
+// Resolve the connector
+                $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
+
+                if ( null === $connector ) {
+                    Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'failed', 'No connector configured or credentials could not be decrypted.' );
+                    return;
+                }
+
+                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'running', 'Poll started.' );
 
 // Cursor-paginated contact collection
-            $all_ids = [];
-            $cursor  = null;
+                $all_ids = [];
+                $cursor  = null;
 
-            do {
-                $result = $connector->get_contacts( $filter_params, $cursor );
+                do {
+                    $result = $connector->get_contacts( $filter_params, $cursor );
 
-                if ( is_wp_error( $result ) ) {
-                    if ( 'rate_limited' === $result->get_error_code() ) {
-                        // Re-schedule the full poll after the back-off window so contacts
-                        // on un-fetched pages are not silently dropped.
-                        $retry_after = (int) ( $result->get_error_data()['retry_after'] ?? 60 );
-                        wp_schedule_single_event(
-                            time() + $retry_after,
-                            'dt_crm_sync_poll',
-                            [ $filter_id ]
-                        );
-                        Disciple_Tools_CRM_Sync_Logger::write(
-                            'scheduled',
-                            $filter_id,
-                            null,
-                            'failed',
-                            'Rate limited during pagination. Poll rescheduled in ' . $retry_after . 's.'
-                        );
-                        // Return immediately — do not fall through to batch scheduling.
-                        // The rescheduled poll will process all contacts from scratch.
-                        return;
-                    } else {
-                        Disciple_Tools_CRM_Sync_Logger::write(
-                            'scheduled',
-                            $filter_id,
-                            null,
-                            'failed',
-                            'API error during pagination: ' . $result->get_error_message()
+                    if ( is_wp_error( $result ) ) {
+                        if ( 'rate_limited' === $result->get_error_code() ) {
+                            // Re-schedule the full poll after the back-off window so contacts
+                            // on un-fetched pages are not silently dropped.
+                            $retry_after = (int) ( $result->get_error_data()['retry_after'] ?? 60 );
+                            $scheduled   = wp_schedule_single_event(
+                                time() + $retry_after,
+                                'dt_crm_sync_poll',
+                                [ $filter_id ]
+                            );
+                            if ( false === $scheduled ) {
+                                Disciple_Tools_CRM_Sync_Logger::write(
+                                    'scheduled',
+                                    $filter_id,
+                                    null,
+                                    'failed',
+                                    'Rate limited during pagination. Reschedule failed — poll will not retry automatically.'
+                                );
+                            } else {
+                                Disciple_Tools_CRM_Sync_Logger::write(
+                                    'scheduled',
+                                    $filter_id,
+                                    null,
+                                    'failed',
+                                    'Rate limited during pagination. Poll rescheduled in ' . $retry_after . 's.'
+                                );
+                            }
+                            // Return immediately — do not fall through to batch scheduling.
+                            // The rescheduled poll will process all contacts from scratch.
+                            return;
+                        } else {
+                            Disciple_Tools_CRM_Sync_Logger::write(
+                                'scheduled',
+                                $filter_id,
+                                null,
+                                'failed',
+                                'API error during pagination: ' . $result->get_error_message()
+                            );
+                        }
+                        // For non-rate-limited errors: schedule whatever was collected before
+                        // the error so partial results are not discarded, then bail.
+                        break;
+                    }
+
+                    $page_contacts = $result['data'] ?? [];
+                    if ( ! empty( $page_contacts ) ) {
+                        $all_ids = array_merge(
+                            $all_ids,
+                            array_values( array_filter( array_column( $page_contacts, 'id' ), fn( $id ) => null !== $id ) )
                         );
                     }
-                    // For non-rate-limited errors: schedule whatever was collected before
-                    // the error so partial results are not discarded, then bail.
-                    break;
+
+                    $cursor = $result['cursor']['next'] ?? null;
+
+                // null is the agreed sentinel for "no more pages" (see abstract-connector.php).
+                // !empty() would wrongly treat '0' as falsy and stop pagination a page early.
+                } while ( null !== $cursor );
+
+                if ( empty( $all_ids ) ) {
+                    Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'skipped', '0 contacts found.' );
+                    return;
                 }
 
-                $page_contacts = $result['data'] ?? [];
-                if ( ! empty( $page_contacts ) ) {
-                    $all_ids = array_merge(
-                        $all_ids,
-                        array_values( array_filter( array_column( $page_contacts, 'id' ), fn( $id ) => null !== $id ) )
-                    );
-                }
-
-                $cursor = $result['cursor']['next'] ?? null;
-
-            } while ( ! empty( $cursor ) );
-
-            if ( empty( $all_ids ) ) {
-                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'skipped', '0 contacts found.' );
-                return;
-            }
-
-            $chunks      = array_chunk( $all_ids, 25 );
-            $batch_count = count( $chunks );
+                $chunks        = array_chunk( $all_ids, 25 );
+                $batch_count   = count( $chunks );
+                $failed_chunks = 0;
 
             // Stagger events by 3 seconds per chunk to avoid concurrent cron spikes.
-            foreach ( $chunks as $i => $chunk ) {
-                wp_schedule_single_event(
-                    time() + 5 + ( $i * 3 ),
-                    'dt_crm_sync_process_batch',
-                    [
-                    [
+                foreach ( $chunks as $i => $chunk ) {
+                    $scheduled = wp_schedule_single_event(
+                        time() + 5 + ( $i * 3 ),
+                        'dt_crm_sync_process_batch',
+                        [
+                        [
                         'ids'            => array_map( 'intval', $chunk ),
                         '_token'         => uniqid( '', true ),
                         '_trigger'       => 'scheduled',
                         '_skip_existing' => $skip_existing,
-                    ]
-                    ]
-                );
-            }
+                        ]
+                        ]
+                    );
+                    if ( false === $scheduled ) {
+                        $failed_chunks++;
+                    }
+                }
 
-            Disciple_Tools_CRM_Sync_Logger::write(
-                'scheduled',
-                $filter_id,
-                null,
-                'success',
-                count( $all_ids ) . ' contacts found, ' . $batch_count . ' batch(es) scheduled.'
-            );
+                $queued_count = $batch_count - $failed_chunks;
+
+                if ( 0 === $queued_count ) {
+                    Disciple_Tools_CRM_Sync_Logger::write(
+                        'scheduled',
+                        $filter_id,
+                        null,
+                        'failed',
+                        count( $all_ids ) . ' contacts found but no batches could be scheduled — all ' . $batch_count . ' batch(es) failed to queue.'
+                    );
+                } elseif ( $failed_chunks > 0 ) {
+                    Disciple_Tools_CRM_Sync_Logger::write(
+                        'scheduled',
+                        $filter_id,
+                        null,
+                        'failed',
+                        count( $all_ids ) . ' contacts found, ' . $queued_count . ' of ' . $batch_count . ' batch(es) scheduled — ' . $failed_chunks . ' batch(es) failed to queue.'
+                    );
+                } else {
+                    Disciple_Tools_CRM_Sync_Logger::write(
+                        'scheduled',
+                        $filter_id,
+                        null,
+                        'success',
+                        count( $all_ids ) . ' contacts found, ' . $batch_count . ' batch(es) scheduled.'
+                    );
+                }
+            } finally {
+                delete_transient( $lock_key );
+            }
         }
     }
 }

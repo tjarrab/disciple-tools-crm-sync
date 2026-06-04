@@ -29,7 +29,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 define( 'DT_CRM_SYNC_PATH', plugin_dir_path( __FILE__ ) );
 define( 'DT_CRM_SYNC_URL', plugin_dir_url( __FILE__ ) );
-define( 'DT_CRM_SYNC_VERSION', '1.0.4' );
+define( 'DT_CRM_SYNC_VERSION', get_file_data( __FILE__, [ 'Version' => 'Version' ] )['Version'] );
 
 // Configuration (repo-specific values — edit config.php before release)
 require_once plugin_dir_path( __FILE__ ) . 'config.php';
@@ -117,22 +117,65 @@ function dt_crm_sync_maybe_create_tables(): void {
         id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
         created_at    DATETIME        NOT NULL,
         trigger_type  VARCHAR(20)     NOT NULL DEFAULT '',
-        respond_id    VARCHAR(64)     NOT NULL DEFAULT '',
+        contact_id    VARCHAR(64)     NOT NULL DEFAULT '',
         dt_post_id    BIGINT UNSIGNED          DEFAULT NULL,
         status        VARCHAR(20)     NOT NULL DEFAULT '',
         message       TEXT            NOT NULL DEFAULT '',
         PRIMARY KEY  (id),
         KEY idx_status      (status),
-        KEY idx_respond_id  (respond_id),
+        KEY idx_contact_id  (contact_id),
         KEY idx_created_at  (created_at)
     ) $charset;";
 
     dbDelta( $logs_sql );
 
+    // Migrate existing dt_crm_sync_logs rows: respond_id → contact_id (1.0.3 → 1.0.4).
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- One-time schema migration; direct queries are intentional and safe here.
+    $has_logs_table = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->prefix . 'dt_crm_sync_logs' ) );
+    if ( $has_logs_table ) {
+        $has_old_col = $wpdb->get_var( "SHOW COLUMNS FROM `{$wpdb->prefix}dt_crm_sync_logs` LIKE 'respond_id'" );
+        if ( $has_old_col ) {
+            // If dbDelta already added contact_id (e.g. on a fresh install that ran
+            // activation() with the old schema), CHANGE would fail with a duplicate-
+            // column error. Drop the stale column instead.
+            $has_new_col = $wpdb->get_var( "SHOW COLUMNS FROM `{$wpdb->prefix}dt_crm_sync_logs` LIKE 'contact_id'" );
+            if ( $has_new_col ) {
+                $wpdb->query( "ALTER TABLE `{$wpdb->prefix}dt_crm_sync_logs` DROP COLUMN `respond_id`" );
+            } else {
+                $wpdb->query( "ALTER TABLE `{$wpdb->prefix}dt_crm_sync_logs` CHANGE `respond_id` `contact_id` VARCHAR(64) NOT NULL DEFAULT ''" );
+            }
+        }
+        $has_old_idx = $wpdb->get_var( "SHOW INDEX FROM `{$wpdb->prefix}dt_crm_sync_logs` WHERE Key_name = 'idx_respond_id'" );
+        if ( $has_old_idx ) {
+            $wpdb->query( "ALTER TABLE `{$wpdb->prefix}dt_crm_sync_logs` DROP INDEX `idx_respond_id`" );
+        }
+    }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+
     if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Translation_Logger' ) ) {
         require_once DT_CRM_SYNC_PATH . 'translation/class-translation-logger.php';
     }
     Disciple_Tools_CRM_Sync_Translation_Logger::create_table();
+
+    // Migrate existing dt_crm_sync_translation_logs rows: respond_id → contact_id (1.0.3 → 1.0.4).
+    // phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- One-time schema migration; direct queries are intentional and safe here.
+    $has_tl_table = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->prefix . 'dt_crm_sync_translation_logs' ) );
+    if ( $has_tl_table ) {
+        $has_old_tl_col = $wpdb->get_var( "SHOW COLUMNS FROM `{$wpdb->prefix}dt_crm_sync_translation_logs` LIKE 'respond_id'" );
+        if ( $has_old_tl_col ) {
+            $has_new_tl_col = $wpdb->get_var( "SHOW COLUMNS FROM `{$wpdb->prefix}dt_crm_sync_translation_logs` LIKE 'contact_id'" );
+            if ( $has_new_tl_col ) {
+                $wpdb->query( "ALTER TABLE `{$wpdb->prefix}dt_crm_sync_translation_logs` DROP COLUMN `respond_id`" );
+            } else {
+                $wpdb->query( "ALTER TABLE `{$wpdb->prefix}dt_crm_sync_translation_logs` CHANGE `respond_id` `contact_id` VARCHAR(64) NOT NULL DEFAULT ''" );
+            }
+        }
+        $has_old_tl_idx = $wpdb->get_var( "SHOW INDEX FROM `{$wpdb->prefix}dt_crm_sync_translation_logs` WHERE Key_name = 'idx_respond_id'" );
+        if ( $has_old_tl_idx ) {
+            $wpdb->query( "ALTER TABLE `{$wpdb->prefix}dt_crm_sync_translation_logs` DROP INDEX `idx_respond_id`" );
+        }
+    }
+    // phpcs:enable WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching,WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
     update_option( 'dt_crm_sync_schema_version', DT_CRM_SYNC_VERSION );
 }
@@ -278,20 +321,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             require_once DT_CRM_SYNC_PATH . 'translation/class-translation-rate-limiter.php';
             require_once DT_CRM_SYNC_PATH . 'translation/class-translation-service.php';
 
-    // Cron-only: processor and poll handler
+    // Import subsystem (loaded in all contexts so hooks fire regardless of how they are invoked)
 
-            if ( wp_doing_cron() ) {
-                require_once DT_CRM_SYNC_PATH . 'import/class-contact-matcher.php';
-                require_once DT_CRM_SYNC_PATH . 'import/class-field-mapper.php';
-                require_once DT_CRM_SYNC_PATH . 'import/class-media-sideloader.php';
-                require_once DT_CRM_SYNC_PATH . 'import/class-message-importer.php';
-                require_once DT_CRM_SYNC_PATH . 'import/class-activity-feed-writer.php';
-                require_once DT_CRM_SYNC_PATH . 'import/import-processor.php';
-                Disciple_Tools_CRM_Sync_Processor::instance();
+            require_once DT_CRM_SYNC_PATH . 'import/class-contact-matcher.php';
+            require_once DT_CRM_SYNC_PATH . 'import/class-field-mapper.php';
+            require_once DT_CRM_SYNC_PATH . 'import/class-media-sideloader.php';
+            require_once DT_CRM_SYNC_PATH . 'import/class-message-importer.php';
+            require_once DT_CRM_SYNC_PATH . 'import/class-activity-feed-writer.php';
+            require_once DT_CRM_SYNC_PATH . 'import/import-processor.php';
+            Disciple_Tools_CRM_Sync_Processor::instance();
 
-                require_once DT_CRM_SYNC_PATH . 'import/poll-handler.php';
-                add_action( 'dt_crm_sync_poll', [ $this, 'run_poll_for_filter' ] );
-            }
+            require_once DT_CRM_SYNC_PATH . 'import/poll-handler.php';
+            add_action( 'dt_crm_sync_poll', [ $this, 'run_poll_for_filter' ] );
 
     // REST-only hooks
 
@@ -456,8 +497,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
                 return $fields;
             }
 
+            $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
+            if ( null === $connector ) {
+                return $fields;
+            }
+
             $raw_mapping  = get_option( 'dt_crm_sync_field_mapping', [] );
-            $target_field = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+            $target_field = $raw_mapping[ $connector->get_messages_field_key() ]['dt_key'] ?? '';
 
             if ( '' !== $target_field && ! in_array( $target_field, [ '__dt_note__', '__skip__' ], true ) && isset( $fields[ $target_field ] ) ) {
                 $fields[ $target_field ]['hidden'] = true;
@@ -480,8 +526,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
                 return;
             }
 
+            $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
+            if ( null === $connector ) {
+                return;
+            }
+
             $raw_mapping  = get_option( 'dt_crm_sync_field_mapping', [] );
-            $target_field = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+            $target_field = $raw_mapping[ $connector->get_messages_field_key() ]['dt_key'] ?? '';
 
             if ( '' === $target_field || in_array( $target_field, [ '__dt_note__', '__skip__' ], true ) ) {
                 return;
@@ -659,13 +710,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             created_at    DATETIME        NOT NULL,
             trigger_type  VARCHAR(20)     NOT NULL DEFAULT '',
-            respond_id    VARCHAR(64)     NOT NULL DEFAULT '',
+            contact_id    VARCHAR(64)     NOT NULL DEFAULT '',
             dt_post_id    BIGINT UNSIGNED          DEFAULT NULL,
             status        VARCHAR(20)     NOT NULL DEFAULT '',
             message       TEXT            NOT NULL DEFAULT '',
             PRIMARY KEY  (id),
             KEY idx_status      (status),
-            KEY idx_respond_id  (respond_id),
+            KEY idx_contact_id  (contact_id),
             KEY idx_created_at  (created_at)
         ) $charset;";
 
@@ -681,6 +732,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             // autoload='yes' (the default) avoids extra SELECT queries on every
             // encrypt_value() / decrypt_value() call.
             add_option( 'dt_crm_sync_encryption_key', base64_encode( random_bytes( 32 ) ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.obfuscation_base64_encode -- Encoding a random 256-bit encryption key for wp_options storage.
+
+            // Stamp the schema version so maybe_create_tables() skips the migration
+            // path on the first page-load after a fresh install.
+            update_option( 'dt_crm_sync_schema_version', DT_CRM_SYNC_VERSION );
         }
 
     // Deactivation
@@ -884,7 +939,10 @@ if ( ! function_exists( 'dt_crm_sync_hook_admin_notice' ) ) {
             wp_localize_script(
                 'dt-crm-sync-notice-dismiss',
                 'dtCrmSyncNotice',
-                [ 'nonce' => wp_create_nonce( 'wp_rest_dismiss' ) ]
+                [
+                    'nonce'        => wp_create_nonce( 'wp_rest_dismiss' ),
+                    'dismissError' => __( 'Could not save the notice dismissal — it will reappear on your next visit.', 'disciple-tools-crm-sync' ),
+                ]
             );
             ?>
             <div class="notice notice-error notice-disciple-tools-crm-sync is-dismissible" data-notice="disciple-tools-crm-sync">

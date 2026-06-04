@@ -42,7 +42,10 @@ class MediaSideloaderTest extends BrainMonkeyTestCase {
                 : $value
         );
         Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
-        Functions\when( 'media_sideload_image' )->justReturn( 'https://local.test/wp-content/uploads/img.jpg' );
+        Functions\when( 'get_posts' )->justReturn( [] );
+        // media_sideload_image() now returns an attachment ID (int) when called with 'id'.
+        Functions\when( 'media_sideload_image' )->justReturn( 9 );
+        Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/img.jpg' );
 
         $result = $this->sideloader->sideload( 'https://cdn.respond.io/img.jpg', 1 );
 
@@ -56,6 +59,7 @@ class MediaSideloaderTest extends BrainMonkeyTestCase {
                 : $value
         );
         Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
         Functions\when( 'media_sideload_image' )->justReturn( new WP_Error( 'sideload_failed', 'Could not sideload' ) );
 
         $url    = 'https://cdn.respond.io/img.png';
@@ -71,6 +75,7 @@ class MediaSideloaderTest extends BrainMonkeyTestCase {
                 : $value
         );
         Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
         Functions\when( 'download_url' )->justReturn( '/nonexistent/tmp/file.pdf' );
         Functions\when( 'media_handle_sideload' )->justReturn( 9 );
         Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/file.pdf' );
@@ -102,6 +107,7 @@ class MediaSideloaderTest extends BrainMonkeyTestCase {
             }
         );
 
+        Functions\when( 'get_posts' )->justReturn( [] );
         Functions\when( 'download_url' )->justReturn( '/tmp/fake_nonexistent_file' );
 
         $captured_name = null;
@@ -121,5 +127,72 @@ class MediaSideloaderTest extends BrainMonkeyTestCase {
             $captured_name,
             'An empty URL path must fall back to the filename "attachment".'
         );
+    }
+
+// Deduplication — re-sync must not re-download an already-sideloaded URL
+
+    public function test_sideload_returns_existing_attachment_url_without_downloading(): void {
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_sideload_allowed_hosts' === $hook
+                ? [ 'cdn.respond.io' ]
+                : $value
+        );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        // Pretend this URL was sideloaded before — attachment 7 is already in the library.
+        Functions\when( 'get_posts' )->justReturn( [ 7 ] );
+        Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/img.jpg' );
+        Functions\expect( 'media_sideload_image' )->never();
+        Functions\expect( 'download_url' )->never();
+
+        $result = $this->sideloader->sideload( 'https://cdn.respond.io/img.jpg', 1 );
+
+        $this->assertSame(
+            'https://local.test/wp-content/uploads/img.jpg',
+            $result,
+            'An already-sideloaded URL must return the existing attachment URL.'
+        );
+    }
+
+    public function test_sideload_saves_source_url_meta_after_image_sideload(): void {
+        $url = 'https://cdn.respond.io/photo.jpg';
+
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_sideload_allowed_hosts' === $hook
+                ? [ 'cdn.respond.io' ]
+                : $value
+        );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'media_sideload_image' )->justReturn( 42 );
+        Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/photo.jpg' );
+
+        Functions\expect( 'update_post_meta' )
+            ->once()
+            ->with( 42, '_dt_crm_sync_source_url', $url )
+            ->andReturn( true );
+
+        $this->sideloader->sideload( $url, 1 );
+    }
+
+    public function test_sideload_saves_source_url_meta_after_non_image_sideload(): void {
+        $url = 'https://cdn.respond.io/doc.pdf';
+
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_sideload_allowed_hosts' === $hook
+                ? [ 'cdn.respond.io' ]
+                : $value
+        );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'download_url' )->justReturn( '/nonexistent/tmp/doc.pdf' );
+        Functions\when( 'media_handle_sideload' )->justReturn( 55 );
+        Functions\when( 'wp_get_attachment_url' )->justReturn( 'https://local.test/wp-content/uploads/doc.pdf' );
+
+        Functions\expect( 'update_post_meta' )
+            ->once()
+            ->with( 55, '_dt_crm_sync_source_url', $url )
+            ->andReturn( true );
+
+        $this->sideloader->sideload( $url, 1 );
     }
 }

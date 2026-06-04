@@ -108,4 +108,30 @@ class RegistryTest extends BrainMonkeyTestCase {
 
         $this->assertInstanceOf( Disciple_Tools_CRM_Sync_Connector_Respond_IO::class, $connector );
     }
+
+    public function test_active_connector_null_when_decryption_fails(): void {
+        // Simulate a credential stored as ciphertext (valid strict base64, decoded
+        // length >= 32) when the decryption key is missing or corrupted. The stub
+        // decrypt_value() always returns false, so the registry should bail out and
+        // return null rather than forwarding the raw ciphertext as a credential.
+        $fake_ciphertext = base64_encode( str_repeat( "\x00", 33 ) );
+
+        $stored_settings = [
+            'active_connector' => 'respond_io',
+            'connectors'       => [
+                'respond_io' => [
+                    'api_token' => $fake_ciphertext,
+                ],
+            ],
+        ];
+        Functions\when( 'get_option' )->justReturn( $stored_settings );
+        Functions\when( 'sanitize_key' )->returnArg();
+        Functions\when( 'apply_filters' )->justReturn( [
+            'respond_io' => 'Disciple_Tools_CRM_Sync_Connector_Respond_IO',
+        ] );
+
+        $connector = Disciple_Tools_CRM_Sync_Connector_Registry::get_active_connector();
+
+        $this->assertNull( $connector );
+    }
 }

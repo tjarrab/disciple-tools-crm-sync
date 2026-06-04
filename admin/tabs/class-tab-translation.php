@@ -31,17 +31,21 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Translation' ) ) {
 
 // POST handler, must run before any HTML output
             if ( isset( $_POST['dt_crm_sync_translation_nonce'] ) ) {
-                check_admin_referer( 'dt_crm_sync_translation_form', 'dt_crm_sync_translation_nonce' );
-
                 if ( ! current_user_can( 'manage_dt' ) ) {
                     wp_die( esc_html__( 'You do not have permission to perform this action.', 'disciple-tools-crm-sync' ) );
                 }
+
+                check_admin_referer( 'dt_crm_sync_translation_form', 'dt_crm_sync_translation_nonce' );
 
                 $values   = dt_recursive_sanitize_array( $_POST );
                 $existing = get_option( 'dt_crm_sync_translation_settings', [] );
 
                 // API key: encrypt new value or preserve existing.
-                $submitted_key = wp_unslash( $_POST['translation_api_key'] ?? '' ); // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Used only for length check; actual value processed below after nonce is verified.
+                // Raw $_POST is read here instead of $values (from dt_recursive_sanitize_array) because
+                // sanitize_text_field() strips characters like +, /, and = that are valid in API keys,
+                // which would silently corrupt the key before it reaches encrypt_value(). The nonce has
+                // already been verified by check_admin_referer() above.
+                $submitted_key = wp_unslash( $_POST['translation_api_key'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Sanitisation intentionally skipped; see comment above.
                 $new_api_key   = $existing['api_key'] ?? '';
                 if ( ! empty( $submitted_key ) ) {
                     try {

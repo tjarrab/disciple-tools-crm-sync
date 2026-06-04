@@ -100,13 +100,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Field_Mapper' ) ) {
 
             $fields        = [];
 
-            // Prepend synthetic entries for top-level contact profile fields that the
-            // Respond.io API returns directly on the contact object (not in custom_fields).
-            // This allows admins to map them via Tab 1 exactly like real custom fields.
-            $synthetic_fields = [
-                [ 'name' => 'Lifecycle', 'value' => $profile['lifecycle'] ?? null ],
-            ];
-            $custom_fields = array_merge( $synthetic_fields, $profile['custom_fields'] ?? [] );
+            // Prepend synthetic field values sourced from the connector so they run
+            // through the same mapping logic as regular custom fields.
+            $synthetic_fields = $this->connector->get_synthetic_field_values( $profile );
+            $custom_fields    = array_merge( $synthetic_fields, $profile['custom_fields'] ?? [] );
 
             // custom_fields is an array of objects, not a dictionary.
             foreach ( $custom_fields as $cf ) {
@@ -188,10 +185,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Field_Mapper' ) ) {
                 return [];
             }
 
-            $synthetic_fields = [
-                [ 'name' => 'Lifecycle', 'value' => $profile['lifecycle'] ?? null ],
-            ];
-            $custom_fields = array_merge( $synthetic_fields, $profile['custom_fields'] ?? [] );
+            $synthetic_fields = $this->connector->get_synthetic_field_values( $profile );
+            $custom_fields    = array_merge( $synthetic_fields, $profile['custom_fields'] ?? [] );
 
             $activity_fields = [];
             foreach ( $custom_fields as $cf ) {
@@ -229,7 +224,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Field_Mapper' ) ) {
          */
         public function get_message_history_target(): ?string {
             $raw_mapping = get_option( 'dt_crm_sync_field_mapping', [] );
-            $dt_key      = $raw_mapping['__respond_io_messages__']['dt_key'] ?? '';
+            $dt_key      = $raw_mapping[ $this->connector->get_messages_field_key() ]['dt_key'] ?? '';
             if ( '' === $dt_key || '__dt_note__' === $dt_key ) {
                 return null; // default: write as DT comment
             }

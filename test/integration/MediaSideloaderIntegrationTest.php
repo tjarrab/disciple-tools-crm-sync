@@ -134,4 +134,59 @@ class MediaSideloaderIntegrationTest extends TestCase {
         remove_all_filters( 'dt_crm_sync_sideload_allowed_hosts' );
         remove_all_filters( 'pre_http_request' );
     }
+
+// Deduplication
+
+    /**
+     * Sideloading a URL that was already processed in a previous run must
+     * return the existing attachment URL without making any HTTP request.
+     *
+     * This covers the re-sync scenario where the same contact is imported
+     * more than once — each attachment must only end up in the Media Library
+     * once.
+     */
+    public function test_second_sideload_of_same_url_skips_download(): void {
+        $url     = 'https://cdn.test.respond.io/already-sideloaded.jpg';
+        $post_id = 1;
+
+        add_filter( 'dt_crm_sync_sideload_allowed_hosts', static function ( array $hosts ): array {
+            $hosts[] = 'cdn.test.respond.io';
+            return $hosts;
+        } );
+
+        // Simulate a previous successful sideload: insert a stub attachment and
+        // tag it with its source URL so the dedup check can find it.
+        $attachment_id = wp_insert_post( [
+            'post_type'   => 'attachment',
+            'post_status' => 'inherit',
+            'post_parent' => $post_id,
+            'post_title'  => 'already-sideloaded.jpg',
+            'guid'        => 'https://local.test/wp-content/uploads/already-sideloaded.jpg',
+        ] );
+        update_post_meta( $attachment_id, '_dt_crm_sync_source_url', $url );
+
+        $http_calls = 0;
+        add_filter( 'pre_http_request', static function ( $pre, $args, $req_url ) use ( &$http_calls ) {
+            ++$http_calls;
+            return new WP_Error( 'should_not_reach', 'No HTTP calls expected for an already-sideloaded URL.' );
+        }, 10, 3 );
+
+        $result = $this->sideloader->sideload( $url, $post_id );
+
+        $this->assertSame(
+            0,
+            $http_calls,
+            'No HTTP request must be made when the URL is already in the Media Library.'
+        );
+        $this->assertSame(
+            wp_get_attachment_url( $attachment_id ),
+            $result,
+            'The existing local attachment URL must be returned instead of the original CDN URL.'
+        );
+
+        // Cleanup.
+        wp_delete_attachment( $attachment_id, true );
+        remove_all_filters( 'dt_crm_sync_sideload_allowed_hosts' );
+        remove_all_filters( 'pre_http_request' );
+    }
 }

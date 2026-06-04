@@ -1,6 +1,6 @@
 {
     "name": "disciple-tools-crm-sync-importer",
-    "version": "1.0.2",
+    "version": "1.0.4",
     "private": true,
     "scripts": {
         "build": "wp-scripts build src/importer-app.js --output-path=dist",

@@ -59,7 +59,7 @@ class LoggerTest extends TestCase {
         $row = $this->last_log_row();
 
         $this->assertSame( 'manual', $row->trigger_type );
-        $this->assertSame( 'r_123', $row->respond_id );
+        $this->assertSame( 'r_123', $row->contact_id );
         $this->assertSame( 42, (int) $row->dt_post_id );
         $this->assertSame( 'merged', $row->status );
         $this->assertSame( 'All good', $row->message );

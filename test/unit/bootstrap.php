@@ -214,6 +214,7 @@ $wpdb = new class() {
     public string $posts     = 'wp_posts';
     public string $comments  = 'wp_comments';
     public string $commentmeta = 'wp_commentmeta';
+    public string $options   = 'wp_options';
 
     /**
      * Return value for the next insert() call; resets to 1 after each call.

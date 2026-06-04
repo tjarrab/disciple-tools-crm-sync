@@ -10,7 +10,7 @@ A WordPress plugin that imports and syncs contacts from CRM platforms into [Disc
 
 Disciple.Tools - CRM Sync bridges your CRM platform and your Disciple.Tools instance. Contacts are imported with their message history, and kept in sync via configurable webhooks and scheduled polling filters. Each import run creates or updates DT contacts and records conversation history as comments.
 
-The plugin is built around a **connector abstraction layer**: each supported CRM is implemented as a separate connector class that extends `Disciple_Tools_CRM_Sync_Abstract_Connector`. Connectors are registered via the `dt_crm_sync_connectors` WordPress filter, so third-party connectors can be added without modifying the core plugin. [Respond.io](https://respond.io) is the bundled first-party connector.
+The plugin is built around a **connector abstraction layer**: each supported CRM is implemented as a separate connector class that extends `Disciple_Tools_CRM_Sync_Abstract_Connector`. Connectors are registered via the `dt_crm_sync_connectors` WordPress filter, so third-party connectors can be added without modifying the core plugin. [Respond.io](https://respond.io) is the bundled first-party connector. There is a metricool example for how to add another connector, however, it has only been tested minimally. 
 
 ---
 
@@ -236,6 +236,7 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 - Added a message history viewer, when messages are mapped to a DT field, the raw field is hidden and replaced with a "View Message History" link that opens a clean, readable HTML page in a new tab
 - Switched Gemini translation to a single batch API call per contact instead of one call per message, to mitigate against PHP timeouts on long conversation histories
+- Corrected a few issues uncovered in code reviews 
 
 ### 1.0.3
 

@@ -46,6 +46,20 @@
         testLog.style.display = 'none';
     }
 
+    var schemaLog = document.getElementById( 'dt-rio-schema-log' );
+
+    function showSchemaLog( text ) {
+        if ( ! schemaLog ) { return; }
+        schemaLog.textContent = text;
+        schemaLog.style.display = 'block';
+    }
+
+    function hideSchemaLog() {
+        if ( ! schemaLog ) { return; }
+        schemaLog.textContent = '';
+        schemaLog.style.display = 'none';
+    }
+
     if ( btnTest ) {
         btnTest.addEventListener( 'click', function() {
             btnTest.disabled = true;
@@ -79,6 +93,7 @@
             } )
             .catch( function( err ) {
                 var errMsg = ( err && err.message ) ? err.message : String( err );
+                console.error( 'dt-crm-sync: test connection request failed:', err );
                 setStatus( 'dt-rio-test-result', ( i18n.requestError || '' ) + ': ' + errMsg, false );
                 showTestLog( ( err && err.stack ) ? err.stack : errMsg );
             } )
@@ -90,6 +105,7 @@
     if ( btnRefresh ) {
         btnRefresh.addEventListener( 'click', function() {
             btnRefresh.disabled = true;
+            hideSchemaLog();
             setStatus( 'dt-rio-schema-result', i18n.refreshing || '', true );
             fetch( root + '/schema?refresh=1', {
                 headers : { 'X-WP-Nonce': nonce },
@@ -101,6 +117,7 @@
             } )
             .then( function( data ) {
                 if ( data && data.success ) {
+                    hideSchemaLog();
                     setStatus( 'dt-rio-schema-result', i18n.doneReloading || '', true );
                     window.location.reload();
                 } else {
@@ -109,8 +126,11 @@
                     btnRefresh.disabled = false;
                 }
             } )
-            .catch( function() {
-                setStatus( 'dt-rio-schema-result', i18n.requestError || '', false );
+            .catch( function( err ) {
+                var errMsg = ( err && err.message ) ? err.message : String( err );
+                console.error( 'dt-crm-sync: schema refresh failed:', err );
+                setStatus( 'dt-rio-schema-result', ( i18n.requestError || '' ) + ': ' + errMsg, false );
+                showSchemaLog( ( err && err.stack ) ? err.stack : errMsg );
                 btnRefresh.disabled = false;
             } );
         } );

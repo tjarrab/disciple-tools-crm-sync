@@ -186,6 +186,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Filters' ) ) {
 
             wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
             wp_clear_scheduled_hook( 'dt_crm_sync_poll_' . $filter_id ); // legacy cleanup
+            delete_transient( 'dt_crm_sync_poll_lock_' . $filter_id );
 
             // Confirm the event is actually gone. In some environments wp_clear_scheduled_hook
             // can silently fail (e.g. serialization quirks in the cron option), so fall back

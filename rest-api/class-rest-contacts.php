@@ -70,7 +70,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Contacts' ) ) {
             $filter_params = isset( $body['filter_params'] ) && is_array( $body['filter_params'] ) ? $body['filter_params'] : $body;
 
             $raw_cursor = $request->get_param( 'cursorId' );
-            $cursor_id  = ! empty( $raw_cursor ) ? absint( $raw_cursor ) : null;
+            $cursor_id  = ( is_string( $raw_cursor ) && ctype_digit( $raw_cursor ) ) ? $raw_cursor : null;
 
             $limit = min( 100, max( 1, absint( $request->get_param( 'limit' ) ?: 50 ) ) );
 
@@ -93,8 +93,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Contacts' ) ) {
          * @return WP_REST_Response
          */
         public function handle_import( WP_REST_Request $request ): WP_REST_Response {
-            $params  = $request->get_json_params() ?? [];
-            $raw_ids = $params['ids'] ?? null;
+            $params        = $request->get_json_params() ?? [];
+            $raw_ids       = $params['ids'] ?? null;
+            $skip_existing = isset( $params['skip_existing'] ) ? (bool) $params['skip_existing'] : true;
 
             if ( ! is_array( $raw_ids ) || empty( $raw_ids ) ) {
                 return new WP_REST_Response(
@@ -121,18 +122,29 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Contacts' ) ) {
             }
 
             $chunks = array_chunk( $ids, 25 );
+            $queued = 0;
 
             // Stagger events by 3 seconds per chunk to avoid concurrent cron spikes.
             foreach ( $chunks as $i => $chunk ) {
-                wp_schedule_single_event(
+                $scheduled = wp_schedule_single_event(
                     time() + 5 + ( $i * 3 ),
                     'dt_crm_sync_process_batch',
-                    [ [ 'ids' => $chunk, '_token' => bin2hex( random_bytes( 8 ) ), '_trigger' => 'manual' ] ]
+                    [ [ 'ids' => $chunk, '_token' => bin2hex( random_bytes( 8 ) ), '_trigger' => 'manual', '_skip_existing' => $skip_existing ] ]
+                );
+                if ( false !== $scheduled ) {
+                    $queued++;
+                }
+            }
+
+            if ( 0 === $queued ) {
+                return new WP_REST_Response(
+                    [ 'error' => __( 'Import could not be queued — no batches were scheduled. Please try again.', 'disciple-tools-crm-sync' ) ],
+                    500
                 );
             }
 
             return new WP_REST_Response(
-                [ 'status' => 'queued', 'batches' => count( $chunks ) ],
+                [ 'status' => 'queued', 'batches' => $queued ],
                 200
             );
         }

@@ -11,6 +11,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Media_Sideloader' ) ) {
      */
     class Disciple_Tools_CRM_Sync_Media_Sideloader {
 
+        // Keeps the last failure reason without changing the return type of sideload().
+        // Callers that care about diagnostics can read it via get_last_error().
+        private ?string $last_error = null;
+
+        /**
+         * Returns the failure reason from the most recent sideload() call, or null
+         * when the last call succeeded (or sideload() hasn't been called yet).
+         */
+        public function get_last_error(): ?string {
+            return $this->last_error;
+        }
+
         /**
          * Download a media URL and store it permanently in the WP Media Library.
          *
@@ -22,6 +34,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Media_Sideloader' ) ) {
          * @return string Local permanent URL on success, original URL as fallback.
          */
         public function sideload( string $url, int $post_id ): string {
+            $this->last_error = null;
+
             if ( empty( $url ) ) {
                 return $url;
             }
@@ -35,7 +49,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Media_Sideloader' ) ) {
             $allowed_hosts = array_values( array_filter( array_map( 'strtolower', $allowed_hosts ), 'strlen' ) );
             $host          = (string) wp_parse_url( $url, PHP_URL_HOST );
             if ( '' === $host || ! in_array( strtolower( $host ), $allowed_hosts, true ) ) {
-                return $url; // Skip sideload; fall back to original URL.
+                // Host not in the allowlist — blocked to prevent SSRF.
+                $this->last_error = 'ssrf_blocked: host "' . $host . '" not in allowlist';
+                return $url;
+            }
+
+            // Already in the library — skip the download.
+            $existing_id = $this->find_existing_attachment( $url, $post_id );
+            if ( $existing_id > 0 ) {
+                $local = wp_get_attachment_url( $existing_id );
+                return $local ? (string) $local : $url;
             }
 
             $image_exts = [ 'jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'tiff' ];
@@ -45,14 +68,28 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Media_Sideloader' ) ) {
             $is_image   = in_array( $ext, $image_exts, true );
 
             if ( $is_image ) {
-                // media_sideload_image() with 'src' returns the permanent attachment URL.
-                $local = media_sideload_image( $url, $post_id, null, 'src' );
-                return is_wp_error( $local ) ? $url : (string) $local;
+                // Return 'id' so we can record the source URL without an extra lookup.
+                $attachment_id = media_sideload_image( $url, $post_id, null, 'id' );
+                if ( is_wp_error( $attachment_id ) ) {
+                    $this->last_error = 'image_wp_error: ' . $attachment_id->get_error_message();
+                    return $url;
+                }
+                $attachment_id = (int) $attachment_id;
+                $saved = update_post_meta( $attachment_id, '_dt_crm_sync_source_url', $url );
+                if ( false === $saved && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                    error_log( sprintf(
+                        '[DT CRM Sync] Sideloader: could not save source URL meta (attachment %d). The same URL may be re-downloaded on next sync.',
+                        $attachment_id
+                    ) );
+                }
+                $local = wp_get_attachment_url( $attachment_id );
+                return $local ? (string) $local : $url;
             }
 
             // Non-image (PDF, audio, video, etc.): download to temp file then register.
             $tmp_file = download_url( $url, 300 );
             if ( is_wp_error( $tmp_file ) ) {
+                $this->last_error = 'download_failed: ' . $tmp_file->get_error_message();
                 return $url;
             }
 
@@ -73,11 +110,40 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Media_Sideloader' ) ) {
             }
 
             if ( is_wp_error( $attachment_id ) ) {
+                $this->last_error = 'attach_wp_error: ' . $attachment_id->get_error_message();
                 return $url;
+            }
+
+            $saved = update_post_meta( $attachment_id, '_dt_crm_sync_source_url', $url );
+            if ( false === $saved && defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( sprintf(
+                    '[DT CRM Sync] Sideloader: could not save source URL meta (attachment %d). The same URL may be re-downloaded on next sync.',
+                    $attachment_id
+                ) );
             }
 
             $local = wp_get_attachment_url( $attachment_id );
             return $local ? (string) $local : $url;
+        }
+
+        /**
+         * Look up an attachment for this contact that was previously sideloaded from $url.
+         *
+         * Scoped to $post_id so contacts don't share attachment posts — ownership
+         * stays clear and deleting one contact's media doesn't affect another's.
+         */
+        private function find_existing_attachment( string $url, int $post_id ): int {
+            $results = get_posts( [
+                'post_type'      => 'attachment',
+                'post_status'    => 'inherit',
+                'post_parent'    => $post_id,
+                'meta_key'       => '_dt_crm_sync_source_url',
+                'meta_value'     => $url,
+                'posts_per_page' => 1,
+                'fields'         => 'ids',
+            ] );
+
+            return ! empty( $results ) ? (int) $results[0] : 0;
         }
     }
 }

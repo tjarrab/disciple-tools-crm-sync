@@ -1,7 +1,8 @@
 <?php
 /**
- * Message Importer — fetches a Respond.io contact's message history and writes
- * a full conversation log covering both sides of the exchange to DT.
+ * Message Importer — fetches a contact's message history from the active
+ * connector and writes a full conversation log covering both sides of the
+ * exchange to DT.
  *
  * On each import the log is rebuilt and upserted (updated in place) so the note
  * stays current without accumulating duplicate entries. By default the log is
@@ -21,14 +22,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
     /**
-     * Builds and upserts a full conversation log for a Respond.io contact.
+     * Builds and upserts a full conversation log for a contact imported by the
+     * active connector.
      *
      * @package Disciple_Tools
      */
     class Disciple_Tools_CRM_Sync_Message_Importer {
-
-        /** Comment author label for the conversation log note. */
-        private const COMMENT_AUTHOR = 'Respond.io';
 
         /**
          * @param Disciple_Tools_CRM_Sync_Abstract_Connector         $connector           Active CRM connector. Provides get_messages() and get_meta_key_prefix().
@@ -64,7 +63,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
             string $respond_id,
             int $dt_post_id,
             int $last_sync = 0, // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- reserved for early-exit optimisation
-            ?string $target_field = null
+            ?string $target_field = null,
+            string $trigger = 'import'
         ): WP_Error|null {
             if ( '__skip__' === $target_field ) {
                 return null;
@@ -109,7 +109,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                     } elseif ( 'incoming' === $traffic || 'contact' === $source ) {
                         $sender = 'Contact';
                     } else {
-                        $sender = 'Respond.io';
+                        $sender = $this->connector->get_label();
                     }
 
                     $content = wp_kses_post( $msg['message']['text'] ?? '' );
@@ -119,13 +119,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                     $media_url = 'attachment' === $msg_type ? ( $msg['message']['url'] ?? '' ) : '';
                     if ( ! empty( $media_url ) ) {
                         $local_url = $this->sideloader->sideload( $media_url, $dt_post_id );
-                        $final_url = ( ! empty( $local_url ) && $local_url !== $media_url ) ? $local_url : $media_url;
-                        $filename  = sanitize_text_field( $msg['message']['filename'] ?? '' );
-                        $label     = '' !== $filename ? '[Attachment: ' . $filename . ']' : '[Attachment]';
+                        $filename  = esc_html( $msg['message']['filename'] ?? '' ); // filename goes into HTML log
+                        $label     = '' !== $filename ? '[Attachment: ' . $filename . ']' : '[Attachment]'; // URL intentionally omitted from log lines (sideloaded links expire).
                         $content   = '' !== $content
                             ? $content . ' ' . $label
                             : $label;
-                        unset( $final_url ); // URL intentionally omitted from log lines (sideloaded links expire).
+
+                        // Log sideload failures here rather than in the sideloader — only this
+                        // layer has the contact context (respond_id, dt_post_id) needed for the entry.
+                        $sideload_error = $this->sideloader->get_last_error();
+                        if ( null !== $sideload_error ) {
+                            Disciple_Tools_CRM_Sync_Logger::write( $trigger, $respond_id, $dt_post_id, 'warning', $sideload_error );
+                        }
                     }
 
                     // Never emit a blank log line — a missing text field on an agent
@@ -154,9 +159,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
 
                 if ( ! empty( $translatable ) ) {
                     $translations = $this->translation_service->translate_batch( $translatable, $respond_id );
-                    foreach ( $translations as $i => $translated ) {
-                        if ( $translated !== $collected[ $i ]['content'] ) {
-                            $collected[ $i ]['content'] .= ' [Translation: ' . sanitize_text_field( $translated ) . ']';
+                    // The service logs its own errors and returns originals on failure, but guard
+                    // against an unexpected empty result (e.g. rate-limited mid-batch returning [])
+                    // so we don't iterate over nothing and silently skip all translations.
+                    if ( is_array( $translations ) && ! empty( $translations ) ) {
+                        foreach ( $translations as $i => $translated ) {
+                            if ( $translated !== $collected[ $i ]['content'] ) {
+                                $collected[ $i ]['content'] .= ' [Translation: ' . esc_html( $translated ) . ']'; // translation is plain text — escape before inserting into the HTML log
+                            }
                         }
                     }
                 }
@@ -172,7 +182,20 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
             if ( null === $target_field ) {
                 $this->upsert_note( $dt_post_id, $collected );
             } else {
-                $this->write_to_field( $dt_post_id, $target_field, $collected );
+                $field_error = $this->write_to_field( $dt_post_id, $target_field, $collected );
+                if ( is_wp_error( $field_error ) ) {
+                    Disciple_Tools_CRM_Sync_Logger::write(
+                        $trigger,
+                        $respond_id,
+                        $dt_post_id,
+                        'warning',
+                        sprintf(
+                            'Field write failed for "%s": %s',
+                            $target_field,
+                            $field_error->get_error_message()
+                        )
+                    );
+                }
             }
 
             return null;
@@ -205,28 +228,46 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                 'comment',
                 [
                     'user_id'        => 0,
-                    'comment_author' => self::COMMENT_AUTHOR,
+                    'comment_author' => $this->connector->get_label(),
                 ],
                 false, // $check_permissions — no user session in WP-Cron
                 true   // $silent — suppress DT notifications on bulk import
             );
 
             if ( $new_id && ! is_wp_error( $new_id ) ) {
-                update_post_meta( $dt_post_id, $meta_key, (int) $new_id );
+                $saved = update_post_meta( $dt_post_id, $meta_key, (int) $new_id );
+                if ( false === $saved ) {
+                    if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                        error_log( sprintf(
+                            '[DT CRM Sync] Message importer: could not save message log comment ID meta (post %d, key "%s"). Subsequent imports will create duplicate message log entries.',
+                            $dt_post_id,
+                            $meta_key
+                        ) );
+                    }
+                }
             }
         }
 
         /**
          * Write the conversation log as plain text to a DT contact field.
+         *
+         * Returns the WP_Error from DT if the write is rejected (e.g. invalid field
+         * key, permission failure), so the caller can log it. Returns null on success.
          */
-        private function write_to_field( int $dt_post_id, string $field_key, array $collected ): void {
-            DT_Posts::update_post(
+        private function write_to_field( int $dt_post_id, string $field_key, array $collected ): WP_Error|null {
+            $result = DT_Posts::update_post(
                 'contacts',
                 $dt_post_id,
                 [ $field_key => $this->format_plain_log( $collected ) ],
                 true,
                 false
             );
+
+            if ( is_wp_error( $result ) ) {
+                return $result;
+            }
+
+            return null;
         }
 
         /**
@@ -234,7 +275,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
          */
         private function format_html_log( array $collected ): string {
             $lines = [
-                '<strong>' . esc_html__( 'Conversation Log (Respond.io)', 'disciple-tools-crm-sync' ) . '</strong>',
+                '<strong>' . esc_html__( 'Conversation Log', 'disciple-tools-crm-sync' ) . ' (' . esc_html( $this->connector->get_label() ) . ')</strong>',
             ];
             foreach ( $collected as $entry ) {
                 $time_label = $entry['ts'] > 0 ? gmdate( 'Y-m-d H:i', $entry['ts'] ) . ' UTC' : '—';

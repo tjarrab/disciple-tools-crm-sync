@@ -64,9 +64,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Translation_Provider' ) )
         /**
          * Translate an array of texts in a single provider call.
          *
-         * Returns an array of translated strings in the same order as $texts.
-         * Any text that couldn't be translated is left as-is so the caller always
-         * gets back an array of the same length.
+         * Returns a result array with three keys:
+         *   'translations'     — Keyed by the same keys as the input $texts. Any text
+         *                        that couldn't be translated should be left as-is so the
+         *                        caller can fall back to the original. Do not re-key the
+         *                        array with sequential integers — the service maps results
+         *                        back to source strings by key, so mismatched keys will
+         *                        silently assign translations to the wrong messages.
+         *   'http_status'      — HTTP status code from the provider, or null when
+         *                        this default loop is used (no single batch request).
+         *   'response_preview' — First 20 chars of the raw response body, or null.
          *
          * This default implementation calls translate_with_meta() once per text
          * and is suitable as a fallback for providers that haven't overridden it.
@@ -74,15 +81,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Translation_Provider' ) )
          *
          * @param array<int, string> $texts  Indexed array of message texts.
          * @param string             $prompt The instruction prepended to each text.
-         * @return array<int, string>|WP_Error
+         * @return array{ translations: array<int, string>, http_status: int|null, response_preview: string|null }|WP_Error
          */
         public function translate_batch( array $texts, string $prompt ): array|WP_Error {
-            $results = [];
+            $translations = [];
             foreach ( $texts as $i => $text ) {
                 $result = $this->translate_with_meta( $text, $prompt );
-                $results[ $i ] = is_wp_error( $result ) ? $text : $result['translation'];
+                $translations[ $i ] = is_wp_error( $result ) ? $text : $result['translation'];
             }
-            return $results;
+            return [
+                'translations'     => $translations,
+                'http_status'      => null,
+                'response_preview' => null,
+            ];
         }
     }
 }

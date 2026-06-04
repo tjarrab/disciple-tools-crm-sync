@@ -124,7 +124,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
          * @param array       $filter_params Generic filter values, e.g. ['search'=>'…','tag'=>'…'].
          * @param string|null $cursor        Opaque cursor value from the previous page, or null for page 1.
          * @param int         $limit         Page size.
-         * @return array|WP_Error
+         * @return array|WP_Error Normalised contact page on success, WP_Error on failure.
          */
         abstract public function get_contacts( array $filter_params, ?string $cursor = null, int $limit = 50 ): array|\WP_Error;
 
@@ -143,10 +143,18 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
          *
          * Each entry is an associative array:
          *   [
-         *     'slug'    => string,           // HTML name attribute + filter_params key
-         *     'label'   => string,           // Input label text
-         *     'type'    => 'text|select',    // Input type
-         *     'options' => array (optional), // For 'select' type: [ value => label ]
+         *     'slug'            => string,           // HTML name attribute + filter_params key
+         *     'label'           => string,           // Input label text
+         *     'type'            => 'text|select',    // Input type
+         *     'options'         => array (optional), // For 'select' type: [ value => label ]
+         *     'exclusive_group' => string (optional), // Group key — only one field in the group
+         *                                             // can have a value at a time; the UI clears
+         *                                             // the others on change. Must be prefixed with
+         *                                             // the connector slug, e.g. 'my_connector_foo',
+         *                                             // to avoid collisions across connectors.
+         *     'group_label'     => string (optional), // Display label for the group heading;
+         *                                             // only needs to be set on the first field
+         *                                             // in the group.
          *   ]
          *
          * @return array<int, array<string, mixed>>
@@ -164,10 +172,39 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
          * @param string      $contact_id Connector-native contact identifier.
          * @param string|null $cursor     Cursor for pagination.
          * @param int         $limit      Page size.
-         * @return array|WP_Error
+         * @return array|WP_Error Normalised message page on success, WP_Error on failure.
          */
         public function get_messages( string $contact_id, ?string $cursor = null, int $limit = 100 ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- Default stub; parameters required by subclass contract.
             return [ 'data' => [], 'cursor' => [ 'next' => null ] ];
+        }
+
+        /**
+         * The key used to store this connector's message history entry in the
+         * dt_crm_sync_field_mapping option. Derived from the connector slug so
+         * each connector gets its own isolated mapping row.
+         *
+         * Respond.io produces '__respond_io_messages__', which matches all
+         * previously saved mapping data — no migration required.
+         *
+         * Override only if you need a key that can't be derived from get_slug().
+         *
+         * @return string
+         */
+        public function get_messages_field_key(): string {
+            return '__' . $this->get_slug() . '_messages__';
+        }
+
+        /**
+         * The WordPress transient key used to cache this connector's remote field schema.
+         *
+         * Derived from the connector slug so each connector has its own isolated cache entry.
+         * For Respond.io this returns 'dt_crm_sync_field_schema_respond_io', which matches
+         * the constant defined in the API client — no existing cached data is invalidated.
+         *
+         * @return string
+         */
+        public function get_schema_transient_key(): string {
+            return 'dt_crm_sync_field_schema_' . $this->get_slug();
         }
 
         /**
@@ -198,9 +235,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
         /**
          * Invalidate any locally cached field schema so the next call to
          * get_field_schema() performs a live fetch.
-         * No-op by default for connectors without schema caching.
+         * Deletes the transient written by the REST schema refresh path.
+         * Connectors that manage their own caching (e.g. Respond.io) should
+         * override this and call their API client's equivalent method instead.
          */
-        public function refresh_schema_cache(): void {}
+        public function refresh_schema_cache(): void {
+            delete_transient( $this->get_schema_transient_key() );
+        }
 
         /**
          * Fetch the social platform channels connected to a contact.
@@ -210,7 +251,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
          * channel lookups should override this to call their API.
          *
          * @param string $contact_id Connector-native contact identifier.
-         * @return array|WP_Error
+         * @return array|WP_Error Normalised channel list on success, WP_Error on failure.
          */
         public function get_contact_channels( string $contact_id ): array|\WP_Error { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- Default stub; parameters required by subclass contract.
             return [ 'data' => [] ];
@@ -248,6 +289,24 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Abstract_Connector' ) ) {
          * @return array<int, array<string, mixed>>
          */
         public function get_synthetic_schema_fields(): array {
+            return [];
+        }
+
+        /**
+         * Extracts values for synthetic fields from a raw contact profile.
+         *
+         * Called at import time to produce the value-bearing entries that get
+         * prepended to `custom_fields` in the field mapper. Each connector that
+         * declares synthetic schema fields should override this to pull the
+         * corresponding values out of whatever profile shape its API returns.
+         *
+         * Each entry must include at least 'name' and 'value' keys, matching the
+         * shape expected by the field mapper's custom-field loop.
+         *
+         * @param array $profile Raw contact profile as returned by get_contact().
+         * @return array<int, array<string, mixed>>
+         */
+        public function get_synthetic_field_values( array $profile ): array {
             return [];
         }
     }

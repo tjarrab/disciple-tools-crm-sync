@@ -22,6 +22,7 @@ class MessageImporterTest extends BrainMonkeyTestCase {
 
         $this->connector = $this->createMock( Disciple_Tools_CRM_Sync_Abstract_Connector::class );
         $this->connector->method( 'get_meta_key_prefix' )->willReturn( '_respond_io_' );
+        $this->connector->method( 'get_label' )->willReturn( 'Respond.io' );
 
         $this->sideloader = $this->createMock( Disciple_Tools_CRM_Sync_Media_Sideloader::class );
         $this->importer   = new Disciple_Tools_CRM_Sync_Message_Importer( $this->connector, $this->sideloader );
@@ -278,6 +279,39 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $this->assertSame( 'rate_limited', $result->get_error_code() );
     }
 
+    public function test_import_logs_warning_when_field_write_fails(): void {
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_1',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'hello' ],
+                'status'    => [ [ 'timestamp' => 0 ] ],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        DT_Posts::$update_post_result = new WP_Error( 'permission_error', 'Not allowed.' );
+
+        $result = $this->importer->import( 'rid_1', 10, 0, 'notes_for_dt' );
+
+        $this->assertNull( $result, 'A field write failure must not abort the batch (must return null).' );
+
+        global $wpdb;
+        $log_rows = array_filter(
+            $wpdb->insert_calls,
+            fn( $call ) => str_contains( $call['table'], 'dt_crm_sync_logs' )
+        );
+        $this->assertNotEmpty( $log_rows, 'A log row must be written when the field write fails.' );
+
+        $row = array_values( $log_rows )[0]['data'];
+        $this->assertSame( 'warning', $row['status'], 'Log status must be "warning" for a non-fatal field write failure.' );
+        $this->assertStringContainsString( 'notes_for_dt', $row['message'], 'Log message must identify the target field key.' );
+        $this->assertStringContainsString( 'Not allowed.', $row['message'], 'Log message must include the WP_Error message.' );
+    }
+
     // --- pagination ---
 
     public function test_import_follows_pagination_cursor(): void {
@@ -373,5 +407,123 @@ class MessageImporterTest extends BrainMonkeyTestCase {
             $calls[0]['content'],
             'Translation suffix should not be appended when translation equals original.'
         );
+    }
+
+    public function test_import_succeeds_when_translate_batch_returns_empty_array(): void {
+        $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
+        $translation_service->method( 'translate_batch' )->willReturn( [] );
+
+        $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
+            $this->connector,
+            $this->sideloader,
+            $translation_service
+        );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [
+                    'messageId' => 'msg_1',
+                    'traffic'   => 'incoming',
+                    'sender'    => [ 'source' => 'contact' ],
+                    'message'   => [ 'text' => 'Hola' ],
+                    'status'    => [ [ 'timestamp' => 0 ] ],
+                ],
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $result = $importer->import( 'rid_1', 10, 0 );
+
+        $this->assertNull( $result, 'Import should complete successfully.' );
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls, 'Conversation log should still be written when translate_batch returns [].' );
+        $this->assertStringNotContainsString( '[Translation:', $calls[0]['content'] );
+    }
+
+    public function test_translation_containing_html_metacharacters_is_encoded(): void {
+        // Regression: esc_html() must be used when appending the translation label,
+        // not sanitize_text_field(), which passes & < > through unencoded.
+        $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
+        $translation_service->method( 'translate_batch' )->willReturnCallback(
+            function ( array $texts ) {
+                return array_map( fn() => 'A & B < C > D', $texts );
+            }
+        );
+
+        $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
+            $this->connector,
+            $this->sideloader,
+            $translation_service
+        );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [
+                    'messageId' => 'msg_meta',
+                    'traffic'   => 'incoming',
+                    'sender'    => [ 'source' => 'contact' ],
+                    'message'   => [ 'text' => 'Hola' ],
+                    'status'    => [ [ 'timestamp' => 0 ] ],
+                ],
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $importer->import( 'rid_1', 10, 0 );
+
+        $content = DT_Posts::$add_comment_calls[0]['content'] ?? '';
+        $this->assertStringContainsString( '&amp;', $content, 'Ampersand must be HTML-encoded in the translation label.' );
+        $this->assertStringContainsString( '&lt;', $content, 'Less-than must be HTML-encoded in the translation label.' );
+        $this->assertStringContainsString( '&gt;', $content, 'Greater-than must be HTML-encoded in the translation label.' );
+        // The raw characters must not appear inside the [Translation: ...] label itself.
+        $label_start = strpos( $content, '[Translation:' );
+        $label_end   = strpos( $content, ']', $label_start );
+        $label        = substr( $content, $label_start, $label_end - $label_start + 1 );
+        $this->assertStringNotContainsString( ' & ', $label, 'Raw ampersand must not appear inside the translation label.' );
+        $this->assertStringNotContainsString( ' < ', $label, 'Raw less-than must not appear inside the translation label.' );
+    }
+
+    // --- sideload failure warning log ---
+
+    public function test_sideload_failure_writes_warning_log_entry(): void {
+        // Stub a sideloader that reports a blocked host and returns the original URL.
+        $failing_sideloader = new class() extends Disciple_Tools_CRM_Sync_Media_Sideloader {
+            public function sideload( string $url, int $post_id ): string {
+                return $url;
+            }
+            public function get_last_error(): ?string {
+                return 'ssrf_blocked: host "evil.example.com" not in allowlist';
+            }
+        };
+
+        $importer = new Disciple_Tools_CRM_Sync_Message_Importer( $this->connector, $failing_sideloader );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [
+                    'messageId' => 'msg_attach',
+                    'traffic'   => 'outgoing',
+                    'sender'    => [ 'source' => 'user' ],
+                    'message'   => [ 'type' => 'attachment', 'text' => '', 'url' => 'https://evil.example.com/file.pdf', 'filename' => 'file.pdf' ],
+                    'status'    => [ [ 'timestamp' => 0 ] ],
+                ],
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $importer->import( 'rid_1', 10, 0, null, 'scheduled' );
+
+        global $wpdb;
+        $warning_calls = array_filter(
+            $wpdb->insert_calls,
+            fn( $call ) => ( $call['data']['status'] ?? '' ) === 'warning'
+        );
+
+        $this->assertNotEmpty( $warning_calls, 'A warning log entry should be written when sideload fails.' );
+
+        $entry = array_values( $warning_calls )[0]['data'];
+        $this->assertSame( 'scheduled', $entry['trigger_type'] );
+        $this->assertSame( 'rid_1', $entry['contact_id'] );
+        $this->assertStringStartsWith( 'ssrf_blocked:', $entry['message'] );
     }
 }

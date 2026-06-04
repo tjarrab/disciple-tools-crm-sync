@@ -244,6 +244,81 @@ class AdminTabTest extends BrainMonkeyTestCase {
         $this->assertNotEmpty( $stored_token, 'A non-empty encrypted token must be stored.' );
     }
 
+    /**
+     * Password credential fields must survive the full save-then-decrypt round-trip
+     * even when the token contains +, /, and = — characters valid in API keys but
+     * stripped by sanitize_text_field().
+     *
+     * Note: the dt_recursive_sanitize_array stub in wp-function-stubs.php is a
+     * pass-through, so this test can't simulate the corruption itself. What it does
+     * guard is the full encryption pipeline: if the password branch ever regresses to
+     * pulling from $submitted_creds (the sanitized array) again, the decrypt assertion
+     * will catch it the moment a real sanitize stub is wired in.
+     */
+    public function test_tab_config_password_field_survives_base64_characters(): void {
+        $token_with_special_chars = 'abc+token/value==long_key';
+
+        $_POST = [
+            'dt_crm_sync_nonce' => 'test_nonce',
+            'save_settings'     => '1',
+            'active_connector'  => 'respond_io',
+            'connectors'        => [
+                'respond_io' => [
+                    'api_url'   => 'https://api.test',
+                    'api_token' => $token_with_special_chars,
+                ],
+            ],
+        ];
+
+        Functions\when( 'get_option' )->alias(
+            static function ( string $key, $default = false ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    return [];
+                }
+                if ( 'dt_crm_sync_encryption_key' === $key ) {
+                    return base64_encode( str_repeat( "\x01", 32 ) );
+                }
+                return $default;
+            }
+        );
+
+        $saved = null;
+        Functions\when( 'update_option' )->alias(
+            static function ( string $key, $value ) use ( &$saved ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    $saved = $value;
+                }
+            }
+        );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $stored_token = $saved['connectors']['respond_io']['api_token'] ?? '';
+        $this->assertNotEmpty( $stored_token, 'An encrypted token must be stored.' );
+
+        // Wire up a real AES-256-CBC decrypt so we can verify the round-trip.
+        // The stub's $test_decrypt_fn hook exists for exactly this purpose.
+        $raw_key = base64_decode( base64_encode( str_repeat( "\x01", 32 ) ), true );
+        Disciple_Tools_CRM_Sync::$test_decrypt_fn = static function ( string $value ) use ( $raw_key ): string|false {
+            $decoded = base64_decode( $value, true );
+            if ( false === $decoded || strlen( $decoded ) <= 16 ) {
+                return false;
+            }
+            $iv         = substr( $decoded, 0, 16 );
+            $ciphertext = substr( $decoded, 16 );
+            return openssl_decrypt( $ciphertext, 'AES-256-CBC', $raw_key, OPENSSL_RAW_DATA, $iv );
+        };
+
+        $decrypted = Disciple_Tools_CRM_Sync::decrypt_value( $stored_token );
+        $this->assertSame(
+            $token_with_special_chars,
+            $decrypted,
+            'Decrypted token must exactly match the original — including +, /, and = characters.'
+        );
+    }
+
 // Tab_Automations — create filter
 
     /**

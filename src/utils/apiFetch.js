@@ -54,7 +54,9 @@ export async function apiFetch( url, options = {}, timeout = 30000 ) {
             throw new Error( message );
         }
 
-        return response.json();
+        // Await here so a SyntaxError from a non-JSON 200 body is caught below
+        // rather than escaping as an unhandled rejection at the call site.
+        return await response.json();
     } catch ( err ) {
         if ( err.name === 'AbortError' ) {
             throw new Error( 'REQUEST_TIMEOUT' );

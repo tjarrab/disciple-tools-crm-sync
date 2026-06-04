@@ -148,7 +148,7 @@ class ApiClientTest extends BrainMonkeyTestCase {
 
         $result = $this->make_client()->get_contacts( [ 'timezone' => 'UTC' ] );
 
-        $this->assertSame( 99999, $result['cursor']['next'] );
+        $this->assertSame( '99999', $result['cursor']['next'] );
         $this->assertCount( 2, $result['data'] );
     }
 
@@ -233,6 +233,30 @@ class ApiClientTest extends BrainMonkeyTestCase {
         $this->assertNull( $result['cursor']['next'] );
     }
 
+    public function test_zero_cursor_id_is_forwarded_in_request_params(): void {
+        // A cursor value of '0' is valid — empty() would drop it from the query params
+        // and the API would re-serve page 1. null !== $cursor_id must be used instead.
+        $captured_params = null;
+        Functions\when( 'wp_timezone_string' )->justReturn( 'UTC' );
+        Functions\when( 'add_query_arg' )->alias(
+            function ( array $params ) use ( &$captured_params ): string {
+                $captured_params = $params;
+                return 'https://api.test/mocked';
+            }
+        );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn(
+            json_encode( [ 'items' => [], 'pagination' => [] ] )
+        );
+
+        $this->make_client()->get_contacts( [ 'timezone' => 'UTC' ], '0' );
+
+        $this->assertArrayHasKey( 'cursorId', $captured_params, 'cursorId must be present when cursor is "0".' );
+        $this->assertSame( '0', $captured_params['cursorId'] );
+    }
+
 // get_contact
 
     public function test_contact_decoded_on_200(): void {
@@ -292,7 +316,7 @@ class ApiClientTest extends BrainMonkeyTestCase {
 
         $result = $this->make_client()->get_message_list( '42' );
 
-        $this->assertSame( 77, $result['cursor']['next'] );
+        $this->assertSame( '77', $result['cursor']['next'] );
     }
 
     public function test_messages_error_on_rate_limit(): void {
@@ -302,6 +326,51 @@ class ApiClientTest extends BrainMonkeyTestCase {
 
         $this->assertInstanceOf( WP_Error::class, $result );
         $this->assertSame( 'rate_limited', $result->get_error_code() );
+    }
+
+// Large cursor precision
+
+    public function test_get_contacts_preserves_large_cursor_id(): void {
+        // A cursor value bigger than PHP_INT_MAX must survive as a string.
+        // Before the fix, (int) cast would silently truncate it and the paginator
+        // would request the same page on every iteration.
+        $large_cursor  = '9999999999999999999';
+        $next_url      = 'https://api.respond.io/v2/contact/list?cursorId=' . $large_cursor . '&limit=50';
+        $response_body = json_encode( [
+            'items'      => [ [ 'id' => 1 ] ],
+            'pagination' => [ 'next' => $next_url ],
+        ] );
+
+        Functions\when( 'wp_timezone_string' )->justReturn( 'UTC' );
+        Functions\when( 'add_query_arg' )->justReturn( 'https://api.test/v2/contact/list?limit=50' );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( $response_body );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+
+        $result = $this->make_client()->get_contacts( [ 'timezone' => 'UTC' ] );
+
+        $this->assertSame( $large_cursor, $result['cursor']['next'] );
+    }
+
+    public function test_get_message_list_preserves_large_cursor_id(): void {
+        // Same precision check for the message list paginator.
+        $large_cursor = '9999999999999999999';
+        $body         = json_encode( [
+            'items'      => [ [ 'messageId' => 'm1' ] ],
+            'pagination' => [ 'next' => 'https://api.test/v2/contact/id:42/message/list?cursorId=' . $large_cursor . '&limit=100' ],
+        ] );
+        Functions\when( 'add_query_arg' )->justReturn( 'https://api.test/mocked' );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( $body );
+        Functions\when( 'wp_parse_url' )->alias( 'parse_url' );
+
+        $result = $this->make_client()->get_message_list( '42' );
+
+        $this->assertSame( $large_cursor, $result['cursor']['next'] );
     }
 
 // HTTP edge cases
