@@ -232,6 +232,13 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.5
+
+- Fixed message ordering in conversation history — contact messages were sorting before agent messages after translation batching was introduced. Timestamps are now derived from the message ID, which is a microsecond epoch for all message types, so incoming messages (which have an empty `status` array) are no longer treated as if they arrived at time zero
+- Message history now shows the contact's name instead of the generic "Contact" label, falling back to the DT contact name or "Contact" if no name is available
+- Timestamps in the conversation log now include the day of the week and seconds, e.g. `2025-05-26, Monday, 14:30:00 UTC`
+- Message history viewer redesigned as a chat thread with contact messages on the left and agent messages on the right
+
 ### 1.0.4
 
 - Added a message history viewer, when messages are mapped to a DT field, the raw field is hidden and replaced with a "View Message History" link that opens a clean, readable HTML page in a new tab

@@ -53,10 +53,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
          * The note/field value is replaced on each import so it always reflects
          * the current message thread.
          *
-         * @param string      $respond_id   Respond.io contact ID.
-         * @param int         $dt_post_id   DT contact post ID.
-         * @param int         $last_sync    Unix timestamp of the last sync (reserved for future early-exit optimisation). // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
-         * @param string|null $target_field null = DT comment, '__skip__' = skip, field key = write to that DT field.
+         * @param string      $respond_id    Respond.io contact ID.
+         * @param int         $dt_post_id    DT contact post ID.
+         * @param int         $last_sync     Unix timestamp of the last sync (reserved for future early-exit optimisation). // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed
+         * @param string|null $target_field  null = DT comment, '__skip__' = skip, field key = write to that DT field.
+         * @param string      $trigger       Import trigger: 'scheduled', 'manual', or 'webhook'.
+         * @param string      $contact_name  Display name for the contact side of the log. Falls back to 'Contact'.
          * @return WP_Error|null
          */
         public function import(
@@ -64,7 +66,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
             int $dt_post_id,
             int $last_sync = 0, // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.FoundAfterLastUsed -- reserved for early-exit optimisation
             ?string $target_field = null,
-            string $trigger = 'import'
+            string $trigger = 'import',
+            string $contact_name = 'Contact'
         ): WP_Error|null {
             if ( '__skip__' === $target_field ) {
                 return null;
@@ -96,7 +99,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                         continue;
                     }
 
-                    $timestamp = (int) ( $msg['status'][0]['timestamp'] ?? 0 );
+                    $timestamp = $this->extract_timestamp( $msg );
 
                     // Sender label derived from traffic direction and sender source.
                     // 'outgoing' covers all agent replies, capturing both sides of the exchange.
@@ -107,7 +110,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                     } elseif ( 'outgoing' === $traffic || 'user' === $source ) {
                         $sender = 'Agent';
                     } elseif ( 'incoming' === $traffic || 'contact' === $source ) {
-                        $sender = 'Contact';
+                        $sender = $contact_name;
                     } else {
                         $sender = $this->connector->get_label();
                     }
@@ -141,6 +144,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
 
                     $collected[] = [
                         'ts'      => $timestamp,
+                        'pos'     => count( $collected ), // insertion order tiebreaker for stable sort
                         'sender'  => sanitize_text_field( $sender ),
                         'content' => $content,
                     ];
@@ -177,7 +181,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
             }
 
             // Sort ascending so the log reads in chronological order.
-            usort( $collected, fn( $a, $b ) => $a['ts'] <=> $b['ts'] );
+            // The pos tiebreaker keeps same-second messages in their original API order.
+            usort( $collected, fn( $a, $b ) => $a['ts'] <=> $b['ts'] ?: $a['pos'] <=> $b['pos'] );
 
             if ( null === $target_field ) {
                 $this->upsert_note( $dt_post_id, $collected );
@@ -278,7 +283,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
                 '<strong>' . esc_html__( 'Conversation Log', 'disciple-tools-crm-sync' ) . ' (' . esc_html( $this->connector->get_label() ) . ')</strong>',
             ];
             foreach ( $collected as $entry ) {
-                $time_label = $entry['ts'] > 0 ? gmdate( 'Y-m-d H:i', $entry['ts'] ) . ' UTC' : '—';
+                $time_label = $entry['ts'] > 0 ? gmdate( 'Y-m-d, l, H:i:s', $entry['ts'] ) . ' UTC' : '—';
                 $lines[]    = '[' . esc_html( $time_label ) . '] '
                     . '<strong>' . esc_html( $entry['sender'] ) . ':</strong> '
                     . $entry['content'];
@@ -292,10 +297,25 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
         private function format_plain_log( array $collected ): string {
             $lines = [];
             foreach ( $collected as $entry ) {
-                $time_label = $entry['ts'] > 0 ? gmdate( 'Y-m-d H:i', $entry['ts'] ) . ' UTC' : '—';
+                $time_label = $entry['ts'] > 0 ? gmdate( 'Y-m-d, l, H:i:s', $entry['ts'] ) . ' UTC' : '—';
                 $lines[]    = '[' . $time_label . '] ' . $entry['sender'] . ': ' . wp_strip_all_tags( $entry['content'] );
             }
             return implode( "\n", $lines );
+        }
+
+        /**
+         * Derive a Unix timestamp in seconds from a message object.
+         *
+         * messageId is a microsecond-precision epoch for all message types —
+         * incoming messages always have an empty status array, so delivery
+         * timestamps can't be used as a consistent source for both sides.
+         */
+        private function extract_timestamp( array $msg ): int {
+            $msg_id = (int) ( $msg['messageId'] ?? 0 );
+            if ( $msg_id <= 0 ) {
+                return 0;
+            }
+            return (int) ( $msg_id / 1_000_000 );
         }
     }
 }

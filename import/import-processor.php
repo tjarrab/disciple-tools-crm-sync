@@ -349,8 +349,20 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 }
 
                 // Import message history.
+                // Build the display name for the contact side of the conversation log.
+                // Priority: Respond.io profile name → DT post title → generic fallback.
+                $first        = sanitize_text_field( $profile['firstName'] ?? '' );
+                $last         = sanitize_text_field( $profile['lastName'] ?? '' );
+                $contact_name = trim( $first . ' ' . $last );
+                if ( '' === $contact_name && $dt_post_id ) {
+                    $contact_name = get_the_title( $dt_post_id );
+                }
+                if ( '' === $contact_name ) {
+                    $contact_name = 'Contact';
+                }
+
                 $msg_target = $this->mapper->get_message_history_target();
-                $msg_error  = $this->message_importer->import( $respond_id, $dt_post_id, 0, $msg_target, $trigger_type );
+                $msg_error  = $this->message_importer->import( $respond_id, $dt_post_id, 0, $msg_target, $trigger_type, $contact_name );
                 if ( is_wp_error( $msg_error ) ) {
                     // Propagate 429 / 449 for batch rescheduling.
                     return $msg_error;

@@ -124,10 +124,68 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
                 $contact_id
             );
 
-            $this->output_html_page( $title, nl2br( esc_html( $text ) ) );
+            $this->output_html_page( $title, $this->render_message_bubbles( $text, $connector->get_label() ) );
         }
 
 // HTML output helpers
+
+        /**
+         * Turn the plain-text log stored in post meta into a series of chat bubbles.
+         *
+         * Each line in the log follows the format written by Message_Importer:
+         *   [YYYY-MM-DD, Weekday, HH:MM:SS UTC] Sender: content
+         *
+         * Lines that don't match (e.g. legacy entries or the header line written
+         * by format_html_log) are rendered as neutral system notes so nothing
+         * is silently dropped.
+         *
+         * @param string $text             Plain-text conversation log from post meta.
+         * @param string $connector_label  e.g. "Respond.io" — used to identify agent-side senders.
+         * @return string HTML string of bubble elements, ready to embed in the page body.
+         */
+        private function render_message_bubbles( string $text, string $connector_label ): string {
+            $agent_senders = [ 'Agent', 'Internal Note', sanitize_text_field( $connector_label ) ];
+            $html          = '';
+
+            foreach ( explode( "\n", $text ) as $line ) {
+                $line = trim( $line );
+                if ( '' === $line ) {
+                    continue;
+                }
+
+                // Expected format: [timestamp] Sender: content
+                if ( preg_match( '/^\[([^\]]+)\] ([^:]+): (.+)$/s', $line, $m ) ) {
+                    $timestamp = esc_html( $m[1] );
+                    $sender    = esc_html( trim( $m[2] ) );
+                    $content   = nl2br( esc_html( trim( $m[3] ) ) );
+                    $is_agent  = in_array( trim( $m[2] ), $agent_senders, true );
+                    $is_note   = 'Internal Note' === trim( $m[2] );
+
+                    if ( $is_note ) {
+                        $bubble_class = 'self-start max-w-prose bg-amber-50 dark:bg-amber-900/30 text-gray-700 dark:text-gray-200 border border-amber-200 dark:border-amber-700 italic rounded-xl px-4 py-2 text-sm';
+                        $label_class  = 'text-xs text-amber-600 dark:text-amber-400 mb-1';
+                    } elseif ( $is_agent ) {
+                        $bubble_class = 'self-end max-w-prose bg-blue-500 text-white rounded-2xl rounded-tr-sm px-4 py-2';
+                        $label_class  = 'text-xs text-blue-200 mb-1 text-right';
+                    } else {
+                        $bubble_class = 'self-start max-w-prose bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-2xl rounded-tl-sm px-4 py-2 shadow-sm';
+                        $label_class  = 'text-xs text-gray-400 dark:text-gray-500 mb-1';
+                    }
+
+                    $align = $is_agent ? 'items-end' : 'items-start';
+
+                    $html .= '<div class="flex flex-col ' . $align . ' gap-0.5">';
+                    $html .= '<span class="' . $label_class . '">' . $sender . ' &middot; ' . $timestamp . '</span>';
+                    $html .= '<div class="' . $bubble_class . '">' . $content . '</div>';
+                    $html .= '</div>';
+                } else {
+                    // Unrecognised line — render as a centred system note so it's visible but unobtrusive.
+                    $html .= '<div class="self-center text-xs text-gray-400 dark:text-gray-500 italic py-1">' . esc_html( $line ) . '</div>';
+                }
+            }
+
+            return $html;
+        }
 
         /**
          * Send a self-contained HTML error page and exit.
@@ -145,11 +203,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
 
         /**
          * Emit a complete HTML page, set the Content-Type header, and exit.
-         * Using nl2br(esc_html()) on the caller side keeps this method agnostic
-         * about whether $body is already HTML.
+         *
+         * $body is trusted HTML — callers are responsible for escaping before
+         * passing it in. render_message_bubbles() escapes all user-derived content
+         * before building its output; output_error_page() escapes inline.
          *
          * @param string $title Page <title> text.
-         * @param string $body  HTML body content (trusted — already escaped by caller).
+         * @param string $body  HTML body content (already escaped by caller).
          */
         private function output_html_page( string $title, string $body ): void {
             header( 'Content-Type: text/html; charset=UTF-8' );
@@ -160,17 +220,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
             echo '<meta charset="UTF-8">';
             echo '<meta name="viewport" content="width=device-width, initial-scale=1">';
             echo '<title>' . esc_html( $title ) . '</title>';
-            echo '<style>';
-            echo 'body{margin:0;padding:2rem;font-family:system-ui,-apple-system,sans-serif;font-size:1rem;line-height:1.7;background:#f9f9f9;color:#1d1d1d}';
-            echo '.container{max-width:780px;margin:0 auto;background:#fff;padding:2rem 2.5rem;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.1)}';
-            echo 'h1{font-size:1.2rem;margin-top:0;color:#1e1e1e;border-bottom:1px solid #e5e5e5;padding-bottom:0.75rem;margin-bottom:1.5rem}';
-            echo '.log{white-space:pre-wrap;word-break:break-word}';
-            echo '</style>';
+            echo '<script src="https://cdn.tailwindcss.com"></script>'; // phpcs:ignore WordPress.WP.EnqueuedResources.NonEnqueuedScript -- standalone REST page, no WP head available
+            echo '<script>tailwind.config = { darkMode: "media" }</script>';
             echo '</head>';
-            echo '<body>';
-            echo '<div class="container">';
-            echo '<h1>' . esc_html( $title ) . '</h1>';
-            echo '<div class="log">' . $body . '</div>';
+            echo '<body class="bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen p-4 sm:p-8">';
+            echo '<div class="max-w-2xl mx-auto">';
+            echo '<h1 class="text-base font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 pb-3 mb-6">' . esc_html( $title ) . '</h1>';
+            echo '<div class="flex flex-col gap-3">' . $body . '</div>';
             echo '</div>';
             echo '</body>';
             echo '</html>';

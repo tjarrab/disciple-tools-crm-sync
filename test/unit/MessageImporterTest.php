@@ -167,11 +167,11 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $this->connector->method( 'get_messages' )->willReturn( [
             'data'   => [
             [
-                'messageId' => 'msg_ts',
+                'messageId' => $ts * 1_000_000,
                 'traffic'   => 'incoming',
                 'sender'    => [ 'source' => 'contact' ],
                 'message'   => [ 'text' => 'hi' ],
-                'status'    => [ [ 'timestamp' => $ts ] ],
+                'status'    => [],
             ]
             ],
             'cursor' => [ 'next' => null ],
@@ -182,17 +182,17 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $calls = DT_Posts::$add_comment_calls;
         $this->assertNotEmpty( $calls );
         $this->assertStringContainsString(
-            gmdate( 'Y-m-d H:i', $ts ) . ' UTC',
+            gmdate( 'Y-m-d, l, H:i:s', $ts ) . ' UTC',
             $calls[0]['content'],
-            'Log line should include the UTC timestamp.'
+            'Log line should include the UTC timestamp derived from messageId.'
         );
     }
 
     public function test_import_sorts_messages_chronologically(): void {
         $this->connector->method( 'get_messages' )->willReturn( [
             'data'   => [
-                [ 'messageId' => 'msg_b', 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ],    'message' => [ 'text' => 'second' ], 'status' => [ [ 'timestamp' => 200 ] ] ],
-                [ 'messageId' => 'msg_a', 'traffic' => 'incoming', 'sender' => [ 'source' => 'contact' ], 'message' => [ 'text' => 'first' ],  'status' => [ [ 'timestamp' => 100 ] ] ],
+                [ 'messageId' => 200_000_000, 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ],    'message' => [ 'text' => 'second' ], 'status' => [] ],
+                [ 'messageId' => 100_000_000, 'traffic' => 'incoming', 'sender' => [ 'source' => 'contact' ], 'message' => [ 'text' => 'first' ],  'status' => [] ],
             ],
             'cursor' => [ 'next' => null ],
         ] );
@@ -204,6 +204,93 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $pos_first  = strpos( $calls[0]['content'], 'first' );
         $pos_second = strpos( $calls[0]['content'], 'second' );
         $this->assertLessThan( $pos_second, $pos_first, 'Earlier timestamp must appear before later timestamp in the log.' );
+    }
+
+    public function test_import_derives_timestamp_from_message_id_for_incoming_message(): void {
+        $ts = 1748246400; // 2025-05-26 00:00:00 UTC — incoming messages have status: []
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => $ts * 1_000_000,
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'hi' ],
+                'status'    => [],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $this->assertStringContainsString(
+            '2025-',
+            $calls[0]['content'],
+            'Timestamp from messageId should produce a real year, not the — placeholder.'
+        );
+        $this->assertStringNotContainsString(
+            '[—]',
+            $calls[0]['content'],
+            'An incoming message with a valid messageId must not render with the missing-timestamp placeholder.'
+        );
+    }
+
+    public function test_import_sorts_contact_before_agent_when_contact_sent_first(): void {
+        // The original bug: API returns newest-first so the agent reply comes back
+        // before the contact message in the items array, but after sorting by
+        // messageId the contact message must appear first in the log.
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+                [ 'messageId' => 1_000_200_000_000, 'traffic' => 'outgoing', 'sender' => [ 'source' => 'user' ],    'message' => [ 'text' => 'agent reply' ],  'status' => [] ],
+                [ 'messageId' => 1_000_100_000_000, 'traffic' => 'incoming', 'sender' => [ 'source' => 'contact' ], 'message' => [ 'text' => 'contact msg' ], 'status' => [] ],
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0 );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $pos_contact = strpos( $calls[0]['content'], 'contact msg' );
+        $pos_agent   = strpos( $calls[0]['content'], 'agent reply' );
+        $this->assertLessThan(
+            $pos_agent,
+            $pos_contact,
+            'Contact message sent before agent reply must appear first in the log.'
+        );
+    }
+
+    public function test_import_uses_contact_name_as_sender_label(): void {
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 1_000_100_000_000,
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => 'hello' ],
+                'status'    => [],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0, null, 'import', 'Ahmed Ali' );
+
+        $calls = DT_Posts::$add_comment_calls;
+        $this->assertNotEmpty( $calls );
+        $this->assertStringContainsString(
+            'Ahmed Ali:',
+            $calls[0]['content'],
+            'Contact name passed to import() should appear as the sender label.'
+        );
+        $this->assertStringNotContainsString(
+            'Contact:',
+            $calls[0]['content'],
+            'Generic "Contact" label must not appear when a real name is provided.'
+        );
     }
 
     // --- upsert behaviour ---
