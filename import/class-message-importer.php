@@ -293,12 +293,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Message_Importer' ) ) {
 
         /**
          * Format the conversation log as plain text for a DT field value.
+         *
+         * Each entry is written as a single line so the viewer can reliably
+         * reassemble the log by splitting on "\n". Embedded newlines in message
+         * text (common in respond.io messages that include a URL on its own line
+         * or multi-line translated text) are collapsed to a single space before
+         * the line is assembled.
          */
         private function format_plain_log( array $collected ): string {
             $lines = [];
             foreach ( $collected as $entry ) {
                 $time_label = $entry['ts'] > 0 ? gmdate( 'Y-m-d, l, H:i:s', $entry['ts'] ) . ' UTC' : '—';
-                $lines[]    = '[' . $time_label . '] ' . $entry['sender'] . ': ' . wp_strip_all_tags( $entry['content'] );
+                $content    = trim( preg_replace( '/\r\n|\r|\n/', ' ', wp_strip_all_tags( $entry['content'] ) ) );
+                $lines[]    = '[' . $time_label . '] ' . $entry['sender'] . ': ' . $content;
             }
             return implode( "\n", $lines );
         }

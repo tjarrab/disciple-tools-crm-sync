@@ -108,7 +108,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
             if ( ! empty( $translation_settings['enabled'] ) && ! empty( $translation_settings['api_key'] ) ) {
                 $api_key = Disciple_Tools_CRM_Sync::decrypt_value( $translation_settings['api_key'] );
                 if ( false !== $api_key ) {
-                    $provider            = new Disciple_Tools_CRM_Sync_Gemini_Translation_Provider( $api_key, $translation_settings['model'] ?? '' );
+                    $provider            = new Disciple_Tools_CRM_Sync_Gemini_Translation_Provider(
+                        $api_key,
+                        $translation_settings['model'] ?? '',
+                        absint( $translation_settings['request_timeout'] ?? 120 ),
+                        absint( $translation_settings['batch_chunk_size'] ?? 10 )
+                    );
                     $translation_service = new Disciple_Tools_CRM_Sync_Translation_Service(
                         $provider,
                         new Disciple_Tools_CRM_Sync_Translation_Rate_Limiter(),

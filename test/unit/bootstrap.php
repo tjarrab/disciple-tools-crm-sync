@@ -441,6 +441,7 @@ require_once $_plugin_root . '/rest-api/abstract-rest-controller.php';
 require_once $_plugin_root . '/rest-api/class-rest-config.php';
 require_once $_plugin_root . '/rest-api/class-rest-contacts.php';
 require_once $_plugin_root . '/rest-api/class-rest-filters.php';
+require_once $_plugin_root . '/rest-api/class-rest-message-viewer.php';
 require_once $_plugin_root . '/rest-api/rest-api.php';
 require_once $_plugin_root . '/translation/abstract-translation-provider.php';
 require_once $_plugin_root . '/translation/gemini/gemini-translation-provider.php';
