@@ -17,23 +17,37 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
      * Model list is cached in transient `dt_crm_sync_gemini_models` for 24 hours and
      * can be flushed via the REST endpoint DELETE /translation/models-cache.
      *
+     * Batch translation splits large message sets into chunks before sending so
+     * that individual requests stay well within the configured timeout. Contacts
+     * with very long conversation histories were hitting cURL error 28 (operation
+     * timed out) when all messages were packed into a single API call.
+     *
      * @package Disciple_Tools
      */
     class Disciple_Tools_CRM_Sync_Gemini_Translation_Provider extends Disciple_Tools_CRM_Sync_Abstract_Translation_Provider {
 
-        private const API_BASE        = 'https://generativelanguage.googleapis.com/v1beta';
+        private const API_BASE         = 'https://generativelanguage.googleapis.com/v1beta';
         private const AUTH_HEADER      = 'x-goog-api-key';
         private const MODELS_TRANSIENT = 'dt_crm_sync_gemini_models';
         private const TRANSIENT_TTL    = DAY_IN_SECONDS;
-        private const REQUEST_TIMEOUT  = 30;
+
+        // How many times to retry a request that times out before giving up.
+        // Two retries gives a reasonable second and third chance without holding
+        // the cron worker for an unreasonable amount of time.
+        private const MAX_RETRIES = 2;
 
         /**
-         * @param string $api_key Plaintext (decrypted) Gemini API key.
-         * @param string $model   Model identifier, e.g. 'models/gemini-2.0-flash'.
+         * @param string $api_key          Plaintext (decrypted) Gemini API key.
+         * @param string $model            Model identifier, e.g. 'models/gemini-2.0-flash'.
+         * @param int    $request_timeout  HTTP timeout in seconds for each Gemini API call.
+         * @param int    $batch_chunk_size Number of messages per chunk when batching. Smaller
+         *                                values mean more API calls but each one finishes faster.
          */
         public function __construct(
             private readonly string $api_key,
-            private readonly string $model
+            private readonly string $model,
+            private readonly int $request_timeout = 120,
+            private readonly int $batch_chunk_size = 10,
         ) {}
 
         /**
@@ -67,7 +81,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
 
             $url      = self::API_BASE . '/models';
             $response = wp_safe_remote_get( $url, [
-                'timeout' => self::REQUEST_TIMEOUT,
+                'timeout' => $this->request_timeout,
                 'headers' => [ self::AUTH_HEADER => $this->api_key ],
             ] );
 
@@ -111,6 +125,40 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
         }
 
         /**
+         * Wrapper around wp_safe_remote_post() that retries on cURL timeout errors.
+         *
+         * cURL error 28 ("Operation timed out") means the server never responded within
+         * the timeout window — it's worth retrying because Gemini can occasionally be
+         * slow rather than actually down. We sleep briefly between attempts so we're
+         * not hammering the API while it's under load.
+         *
+         * Other errors (auth failures, 4xx/5xx responses) are not retried here; that's
+         * handled by the callers based on the HTTP status code.
+         *
+         * @param string               $url  Full URL to POST to.
+         * @param array<string, mixed> $args wp_safe_remote_post() args array.
+         * @return array|WP_Error The last response received, or a WP_Error on final failure.
+         */
+        private function post_with_retry( string $url, array $args ): array|WP_Error {
+            $response = wp_safe_remote_post( $url, $args );
+
+            $attempt = 0;
+            while ( is_wp_error( $response ) && $attempt < self::MAX_RETRIES ) {
+                $message = $response->get_error_message();
+                // Only retry on timeout — other errors won't go away by waiting.
+                if ( str_contains( $message, 'cURL error 28' ) || str_contains( $message, 'timed out' ) ) {
+                    ++$attempt;
+                    sleep( 2 ** $attempt ); // 2s after first timeout, 4s after second.
+                    $response = wp_safe_remote_post( $url, $args );
+                } else {
+                    break;
+                }
+            }
+
+            return $response;
+        }
+
+        /**
          * Call the Gemini generateContent endpoint and return translation metadata.
          *
          * On success returns:
@@ -134,11 +182,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
                 ],
             ] );
 
-            $response = wp_safe_remote_post( $url, [
-                'timeout' => self::REQUEST_TIMEOUT,
+            $response = $this->post_with_retry( $url, [
+                'timeout' => $this->request_timeout,
                 'headers' => [
-                    'Content-Type'     => 'application/json',
-                    self::AUTH_HEADER  => $this->api_key,
+                    'Content-Type'    => 'application/json',
+                    self::AUTH_HEADER => $this->api_key,
                 ],
                 'body'    => $body,
             ] );
@@ -147,10 +195,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
                 return $response;
             }
 
-            $http_status     = (int) wp_remote_retrieve_response_code( $response );
-            $raw_body        = wp_remote_retrieve_body( $response );
+            $http_status      = (int) wp_remote_retrieve_response_code( $response );
+            $raw_body         = wp_remote_retrieve_body( $response );
             $response_preview = substr( $raw_body, 0, 20 );
-            $data            = json_decode( $raw_body, true );
+            $data             = json_decode( $raw_body, true );
 
             if ( $http_status < 200 || $http_status >= 300 ) {
                 $error_msg = $data['error']['message'] ?? "HTTP $http_status";
@@ -178,13 +226,21 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
         }
 
         /**
-         * Translate multiple texts in a single Gemini API call.
+         * Translate multiple texts by splitting them into chunks and calling Gemini once per chunk.
          *
-         * Encodes all texts as a JSON array and asks Gemini to return a JSON array
-         * of the same length in the same order. If the response can't be decoded as
-         * a matching array (Gemini occasionally wraps JSON in markdown fences or
-         * returns fewer items than expected), the method falls back to the parent's
-         * one-call-per-text loop so no messages are silently dropped.
+         * Sending all messages in a single request works fine for short conversations, but
+         * contacts with long histories produce payloads that Gemini can take well over 30 seconds
+         * to process. Chunking keeps each individual request small enough to complete comfortably
+         * within the configured timeout.
+         *
+         * Each chunk is encoded as a JSON array and Gemini is asked to return a matching JSON
+         * array. If Gemini's response can't be decoded as an array of the right length (it
+         * occasionally wraps output in markdown fences or returns fewer items), the chunk falls
+         * back to the parent's one-call-per-text loop. If a chunk fails entirely after retries,
+         * originals are kept for those messages so the rest of the batch is not affected.
+         *
+         * The last successful chunk's HTTP status and response preview are returned so the
+         * translation log has something useful to record.
          *
          * @param array<int, string> $texts  Indexed array of message texts.
          * @param string             $prompt The instruction prepended to the request.
@@ -195,72 +251,86 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Gemini_Translation_Provider' ) ) {
                 return [ 'translations' => [], 'http_status' => null, 'response_preview' => null ];
             }
 
-            $batch_prompt = $prompt
-                . 'Translate each item in the following JSON array. '
-                . "Return ONLY a valid JSON array of translated strings in exactly the same order, with no extra text:\n"
-                . wp_json_encode( array_values( $texts ) );
+            $url          = self::API_BASE . '/' . $this->model . ':generateContent';
+            $output       = $texts; // Start with originals; overwrite as chunks succeed.
+            $last_status  = null;
+            $last_preview = null;
 
-            $url  = self::API_BASE . '/' . $this->model . ':generateContent';
-            $body = wp_json_encode( [
-                'contents' => [
-                    [
-                        'parts' => [
-                            [ 'text' => $batch_prompt ],
+            $chunks = array_chunk( array_keys( $texts ), $this->batch_chunk_size );
+
+            foreach ( $chunks as $key_slice ) {
+                $chunk = array_intersect_key( $texts, array_flip( $key_slice ) );
+
+                $batch_prompt = $prompt
+                    . 'Translate each item in the following JSON array. '
+                    . "Return ONLY a valid JSON array of translated strings in exactly the same order, with no extra text:\n"
+                    . wp_json_encode( array_values( $chunk ) );
+
+                $body = wp_json_encode( [
+                    'contents' => [
+                        [
+                            'parts' => [
+                                [ 'text' => $batch_prompt ],
+                            ],
                         ],
                     ],
-                ],
-            ] );
+                ] );
 
-            $response = wp_safe_remote_post( $url, [
-                'timeout' => self::REQUEST_TIMEOUT,
-                'headers' => [
-                    'Content-Type'     => 'application/json',
-                    self::AUTH_HEADER  => $this->api_key,
-                ],
-                'body'    => $body,
-            ] );
+                $response = $this->post_with_retry( $url, [
+                    'timeout' => $this->request_timeout,
+                    'headers' => [
+                        'Content-Type'    => 'application/json',
+                        self::AUTH_HEADER => $this->api_key,
+                    ],
+                    'body'    => $body,
+                ] );
 
-            if ( is_wp_error( $response ) ) {
-                return $response;
-            }
+                if ( is_wp_error( $response ) ) {
+                    // Timeout or network error — keep originals for this chunk and move on.
+                    continue;
+                }
 
-            $http_status = (int) wp_remote_retrieve_response_code( $response );
-            $raw_body    = wp_remote_retrieve_body( $response );
-            $data        = json_decode( $raw_body, true );
+                $http_status = (int) wp_remote_retrieve_response_code( $response );
+                $raw_body    = wp_remote_retrieve_body( $response );
+                $data        = json_decode( $raw_body, true );
 
-            if ( $http_status < 200 || $http_status >= 300 ) {
-                $error_msg = $data['error']['message'] ?? "HTTP $http_status";
-                return new WP_Error(
-                    'gemini_batch_error',
-                    $error_msg,
-                    [ 'http_status' => $http_status, 'response_preview' => substr( $raw_body, 0, 20 ) ]
-                );
-            }
+                $last_status  = $http_status;
+                $last_preview = substr( $raw_body, 0, 20 );
 
-            $raw_translation = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
+                if ( $http_status < 200 || $http_status >= 300 ) {
+                    // API error for this chunk — keep originals and move on.
+                    continue;
+                }
 
-            // Strip markdown fences that Gemini sometimes wraps around JSON output.
-            $clean = preg_replace( '/^```(?:json)?\s*/i', '', trim( $raw_translation ) );
-            $clean = preg_replace( '/\s*```$/i', '', $clean );
+                $raw_translation = $data['candidates'][0]['content']['parts'][0]['text'] ?? '';
 
-            $translated = json_decode( trim( $clean ), true );
+                // Strip markdown fences that Gemini sometimes wraps around JSON output.
+                $clean = preg_replace( '/^```(?:json)?\s*/i', '', trim( $raw_translation ) );
+                $clean = preg_replace( '/\s*```$/i', '', $clean );
 
-            // If Gemini didn't return a matching array, fall back to individual calls.
-            if ( ! is_array( $translated ) || count( $translated ) !== count( $texts ) ) {
-                return parent::translate_batch( $texts, $prompt );
-            }
+                $translated = json_decode( trim( $clean ), true );
 
-            // Re-key the result to match the original $texts keys.
-            $keys         = array_keys( $texts );
-            $translations = [];
-            foreach ( $keys as $position => $original_key ) {
-                $translations[ $original_key ] = (string) ( $translated[ $position ] ?? $texts[ $original_key ] );
+                if ( ! is_array( $translated ) || count( $translated ) !== count( $chunk ) ) {
+                    // Gemini didn't return a matching array — fall back to individual calls for this chunk.
+                    $fallback = parent::translate_batch( $chunk, $prompt );
+                    if ( ! is_wp_error( $fallback ) ) {
+                        foreach ( $fallback['translations'] as $k => $v ) {
+                            $output[ $k ] = $v;
+                        }
+                    }
+                    continue;
+                }
+
+                // Map translated values back onto the original keys.
+                foreach ( array_values( $key_slice ) as $position => $original_key ) {
+                    $output[ $original_key ] = (string) ( $translated[ $position ] ?? $texts[ $original_key ] );
+                }
             }
 
             return [
-                'translations'     => $translations,
-                'http_status'      => $http_status,
-                'response_preview' => substr( $raw_body, 0, 20 ),
+                'translations'     => $output,
+                'http_status'      => $last_status,
+                'response_preview' => $last_preview,
             ];
         }
     }

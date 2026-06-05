@@ -232,6 +232,10 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.6
+
+- Fixed translation timeouts on contacts with long message histories — messages are now sent to AI translation in small chunks rather than one large request, with automatic retry on timeout. Chunk size and request timeout are both configurable on the Translation settings tab
+
 ### 1.0.5
 
 - Fixed message ordering in conversation history — contact messages were sorting before agent messages after translation batching was introduced. Timestamps are now derived from the message ID, which is a microsecond epoch for all message types, so incoming messages (which have an empty `status` array) are no longer treated as if they arrived at time zero

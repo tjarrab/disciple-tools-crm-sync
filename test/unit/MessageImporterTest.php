@@ -613,4 +613,99 @@ class MessageImporterTest extends BrainMonkeyTestCase {
         $this->assertSame( 'rid_1', $entry['contact_id'] );
         $this->assertStringStartsWith( 'ssrf_blocked:', $entry['message'] );
     }
+
+    // --- plain-text log newline normalization ---
+
+    public function test_plain_log_collapses_embedded_newlines_in_message_text(): void {
+        // Respond.io sometimes delivers a message whose text contains a URL on its
+        // own line, e.g. "Start here:\nhttps://example.com/path". Without
+        // normalization this splits into two physical lines and breaks the viewer.
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_nl',
+                'traffic'   => 'outgoing',
+                'sender'    => [ 'source' => 'user' ],
+                'message'   => [ 'text' => "Start here:\nhttps://example.com/path" ],
+                'status'    => [],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0, 'log_field' );
+
+        $calls = DT_Posts::$update_post_calls;
+        $this->assertNotEmpty( $calls );
+        $stored = $calls[0]['fields']['log_field'];
+
+        $this->assertSame( 1, substr_count( $stored, "\n" ) + 1, 'The plain-text log for a single message must be exactly one line.' );
+        $this->assertStringNotContainsString( "\n", $stored, 'Embedded newlines must be collapsed before writing the plain-text log.' );
+        $this->assertStringContainsString( 'Start here:', $stored, 'Message content must still appear in the log.' );
+        $this->assertStringContainsString( 'https://example.com/path', $stored, 'URL that was on a separate line must still appear after normalization.' );
+    }
+
+    public function test_plain_log_collapses_crlf_in_message_text(): void {
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_crlf',
+                'traffic'   => 'incoming',
+                'sender'    => [ 'source' => 'contact' ],
+                'message'   => [ 'text' => "Line one\r\nLine two" ],
+                'status'    => [],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $this->importer->import( 'rid_1', 10, 0, 'log_field' );
+
+        $calls = DT_Posts::$update_post_calls;
+        $this->assertNotEmpty( $calls );
+        $stored = $calls[0]['fields']['log_field'];
+
+        $this->assertStringNotContainsString( "\r", $stored, 'Carriage returns must be removed from the plain-text log.' );
+        $this->assertStringNotContainsString( "\n", $stored, 'Embedded newlines must be removed from the plain-text log.' );
+    }
+
+    public function test_plain_log_collapses_newlines_in_appended_translation(): void {
+        // The translation suffix itself can span lines when the translated text
+        // contains newlines (e.g. a URL on a new line in the translation).
+        $translation_service = $this->createMock( Disciple_Tools_CRM_Sync_Translation_Service::class );
+        $translation_service->method( 'translate_batch' )->willReturnCallback(
+            function ( array $texts ) {
+                return array_map( fn() => "Yes, start here:\nhttps://example.com/", $texts );
+            }
+        );
+
+        $importer = new Disciple_Tools_CRM_Sync_Message_Importer(
+            $this->connector,
+            $this->sideloader,
+            $translation_service
+        );
+
+        $this->connector->method( 'get_messages' )->willReturn( [
+            'data'   => [
+            [
+                'messageId' => 'msg_tr_nl',
+                'traffic'   => 'outgoing',
+                'sender'    => [ 'source' => 'user' ],
+                'message'   => [ 'text' => 'نعم، ابدأ من هنا:' ],
+                'status'    => [],
+            ]
+            ],
+            'cursor' => [ 'next' => null ],
+        ] );
+
+        $importer->import( 'rid_1', 10, 0, 'log_field' );
+
+        $calls = DT_Posts::$update_post_calls;
+        $this->assertNotEmpty( $calls );
+        $stored = $calls[0]['fields']['log_field'];
+
+        $this->assertStringNotContainsString( "\n", $stored, 'Embedded newlines inside the translation must not survive into the plain-text log.' );
+        $this->assertStringContainsString( '[Translation:', $stored, 'Translation suffix must still appear in the log.' );
+        $this->assertStringContainsString( 'https://example.com/', $stored, 'URL from translation must appear in the log.' );
+    }
 }

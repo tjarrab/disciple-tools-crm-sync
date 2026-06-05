@@ -56,12 +56,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Translation' ) ) {
                 }
 
                 $new_settings = [
-                    'enabled'     => ! empty( $values['translation_enabled'] ),
-                    'provider'    => sanitize_key( $values['translation_provider'] ?? 'gemini' ),
-                    'model'       => sanitize_text_field( $values['translation_model'] ?? '' ),
-                    'api_key'     => $new_api_key,
-                    'prompt'      => sanitize_textarea_field( $values['translation_prompt'] ?? self::DEFAULT_PROMPT ),
-                    'daily_limit' => absint( $values['translation_daily_limit'] ?? 0 ),
+                    'enabled'          => ! empty( $values['translation_enabled'] ),
+                    'provider'         => sanitize_key( $values['translation_provider'] ?? 'gemini' ),
+                    'model'            => sanitize_text_field( $values['translation_model'] ?? '' ),
+                    'api_key'          => $new_api_key,
+                    'prompt'           => sanitize_textarea_field( $values['translation_prompt'] ?? self::DEFAULT_PROMPT ),
+                    'daily_limit'      => absint( $values['translation_daily_limit'] ?? 0 ),
+                    'request_timeout'  => absint( $values['translation_request_timeout'] ?? 120 ),
+                    'batch_chunk_size' => absint( $values['translation_batch_chunk_size'] ?? 10 ),
                 ];
 
                 update_option( 'dt_crm_sync_translation_settings', $new_settings );
@@ -74,12 +76,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Translation' ) ) {
 // Load current settings for page render
             $settings = get_option( 'dt_crm_sync_translation_settings', [] );
             $settings = wp_parse_args( $settings, [
-                'enabled'     => false,
-                'provider'    => 'gemini',
-                'model'       => '',
-                'api_key'     => '',
-                'prompt'      => self::DEFAULT_PROMPT,
-                'daily_limit' => 0,
+                'enabled'          => false,
+                'provider'         => 'gemini',
+                'model'            => '',
+                'api_key'          => '',
+                'prompt'           => self::DEFAULT_PROMPT,
+                'daily_limit'      => 0,
+                'request_timeout'  => 120,
+                'batch_chunk_size' => 10,
             ] );
 
 // Fetch model list (from transient cache or live API)
@@ -269,6 +273,44 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Translation' ) ) {
                                     (int) $mins_left
                                 );
                                 ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_translation_request_timeout">
+                                <?php esc_html_e( 'Request Timeout (seconds)', 'disciple-tools-crm-sync' ); ?>
+                            </label>
+                        </th>
+                        <td>
+                            <input type="number"
+                                   id="dt_translation_request_timeout"
+                                   name="translation_request_timeout"
+                                   min="30"
+                                   max="300"
+                                   class="small-text"
+                                   value="<?php echo esc_attr( (string) $settings['request_timeout'] ); ?>">
+                            <p class="description">
+                                <?php esc_html_e( 'How long to wait for a response from the translation API before giving up. Increase this if translations are failing with timeout errors. Default: 120.', 'disciple-tools-crm-sync' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_translation_batch_chunk_size">
+                                <?php esc_html_e( 'Batch Chunk Size', 'disciple-tools-crm-sync' ); ?>
+                            </label>
+                        </th>
+                        <td>
+                            <input type="number"
+                                   id="dt_translation_batch_chunk_size"
+                                   name="translation_batch_chunk_size"
+                                   min="1"
+                                   max="50"
+                                   class="small-text"
+                                   value="<?php echo esc_attr( (string) $settings['batch_chunk_size'] ); ?>">
+                            <p class="description">
+                                <?php esc_html_e( 'Number of messages sent to the translation API in each request. Smaller values reduce the chance of timeouts on contacts with long conversation histories. Default: 10.', 'disciple-tools-crm-sync' ); ?>
                             </p>
                         </td>
                     </tr>

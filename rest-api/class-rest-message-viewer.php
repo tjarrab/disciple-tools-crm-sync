@@ -143,18 +143,41 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
          * @param string $connector_label  e.g. "Respond.io" — used to identify agent-side senders.
          * @return string HTML string of bubble elements, ready to embed in the page body.
          */
-        private function render_message_bubbles( string $text, string $connector_label ): string {
+        protected function render_message_bubbles( string $text, string $connector_label ): string {
             $agent_senders = [ 'Agent', 'Internal Note', sanitize_text_field( $connector_label ) ];
             $html          = '';
 
-            foreach ( explode( "\n", $text ) as $line ) {
-                $line = trim( $line );
+            // Pass 1 — reassemble entries.
+            //
+            // Older stored logs (written before the importer normalised embedded
+            // newlines) can have a single message spread across several physical
+            // lines. Any physical line that doesn't start with '[' is treated as a
+            // continuation of the previous entry and joined back on with a space,
+            // exactly reversing what the un-normalised storage did.
+            $entries = [];
+            $current = '';
+            foreach ( explode( "\n", $text ) as $raw ) {
+                $line = trim( $raw );
                 if ( '' === $line ) {
                     continue;
                 }
+                if ( '[' === $line[0] ) {
+                    if ( '' !== $current ) {
+                        $entries[] = $current;
+                    }
+                    $current = $line;
+                } else {
+                    $current = '' !== $current ? $current . ' ' . $line : $line;
+                }
+            }
+            if ( '' !== $current ) {
+                $entries[] = $current;
+            }
 
+            // Pass 2 — render each reassembled entry as a chat bubble.
+            foreach ( $entries as $entry ) {
                 // Expected format: [timestamp] Sender: content
-                if ( preg_match( '/^\[([^\]]+)\] ([^:]+): (.+)$/s', $line, $m ) ) {
+                if ( preg_match( '/^\[([^\]]+)\] ([^:]+): (.+)$/s', $entry, $m ) ) {
                     $timestamp = esc_html( $m[1] );
                     $sender    = esc_html( trim( $m[2] ) );
                     $content   = nl2br( esc_html( trim( $m[3] ) ) );
@@ -179,8 +202,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Message_Viewer' ) ) {
                     $html .= '<div class="' . $bubble_class . '">' . $content . '</div>';
                     $html .= '</div>';
                 } else {
-                    // Unrecognised line — render as a centred system note so it's visible but unobtrusive.
-                    $html .= '<div class="self-center text-xs text-gray-400 dark:text-gray-500 italic py-1">' . esc_html( $line ) . '</div>';
+                    // Unrecognised entry — render as a centred system note so it's visible but unobtrusive.
+                    $html .= '<div class="self-center text-xs text-gray-400 dark:text-gray-500 italic py-1">' . esc_html( $entry ) . '</div>';
                 }
             }
 
