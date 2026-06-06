@@ -78,11 +78,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
         /**
          * Returns the filter parameter field definitions exposed in the filter-creation UI.
          *
-         * Three fields are supported: a free-text search query, a tag filter, and a
-         * lifecycle filter. Tag and lifecycle share an exclusive_group so the UI clears
-         * one when the other is filled in — only one can be sent per request. The group
-         * name is prefixed with the connector slug to avoid collisions if a second
-         * connector happens to define a group with the same bare name. Both fields are
+         * Four fields are supported: a free-text search query, a tag filter, a lifecycle
+         * filter, and a conversation status select. Tag and lifecycle share an
+         * exclusive_group so the UI clears one when the other is filled in — only one
+         * can be sent per request. Status is a standalone select (not in the group) with
+         * three options: any (empty), open_or_snoozed, or closed. All fields are
          * translated into Respond.io API filter conditions in get_contacts().
          *
          * @return array
@@ -196,6 +196,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
          * will be present per request. Tag maps to a contactTag hasAnyOf condition;
          * lifecycle maps to a lifecycle isEqualTo condition with a plain string value
          * (not an array, unlike tag).
+         *
+         * conversation_status accepts three values: '' (no filter), 'closed' (single
+         * isEqualTo), or 'open_or_snoozed'. The dual-value case uses a nested $or inside
+         * $and — the API does not support hasAnyOf for the contactField category.
          *
          * @return array|WP_Error
          */

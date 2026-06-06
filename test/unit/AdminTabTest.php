@@ -376,6 +376,58 @@ class AdminTabTest extends BrainMonkeyTestCase {
     }
 
     /**
+     * Select-type filter fields (e.g. conversation_status) must be stored in the
+     * envelope just like text inputs. The PHP form handler reads all field types from
+     * $_POST, so this test documents and protects that behavior.
+     */
+    public function test_tab_automations_create_filter_stores_select_type_field(): void {
+        $_POST = [
+            'dt_crm_sync_automations_nonce'         => 'test_nonce',
+            'filter_name'                           => 'Status Filter',
+            'interval'                              => 'hourly',
+            'filter_poll_time'                      => '00:00',
+            'filter_params_conversation_status'     => 'open_or_snoozed',
+        ];
+
+        $options_saved = [];
+        Functions\when( 'get_option' )->alias(
+            static function ( string $key, $default = false ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    return [ 'active_connector' => 'respond_io' ];
+                }
+                if ( 'dt_crm_sync_saved_filters' === $key ) {
+                    return [];
+                }
+                return $default;
+            }
+        );
+
+        Functions\when( 'update_option' )->alias(
+            static function ( string $key, $value ) use ( &$options_saved ) {
+                $options_saved[ $key ] = $value;
+            }
+        );
+
+        ob_start();
+        try { ( new Disciple_Tools_CRM_Sync_Tab_Automations() )->content();
+        } finally { ob_end_clean();
+        };
+
+        $filter_options = array_filter(
+            array_keys( $options_saved ),
+            static fn( $k ) => str_starts_with( $k, 'dt_crm_sync_saved_filter_' )
+        );
+        $this->assertNotEmpty( $filter_options );
+
+        $envelope = json_decode( $options_saved[ reset( $filter_options ) ], true );
+        $this->assertSame(
+            'open_or_snoozed',
+            $envelope['filter_params']['conversation_status'] ?? null,
+            'conversation_status must be stored in the envelope when submitted as a select field.'
+        );
+    }
+
+    /**
      * When filter_name is blank, no option should be saved and no cron event scheduled.
      */
     public function test_tab_automations_create_filter_requires_nonempty_name(): void {

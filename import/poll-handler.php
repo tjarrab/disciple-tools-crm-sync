@@ -63,6 +63,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
 
             $skip_existing = $envelope['skip_existing'] ?? true;
 
+            // Log the resolved params so the Logs tab shows exactly what each scheduled
+            // run was filtering on — handy when a filter silently produces unexpected results.
+            Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'running', 'Resolved filter_params: ' . wp_json_encode( $filter_params ) );
+
 // Concurrency lock -- one execution per filter at a time
             // The lock value is the acquisition timestamp so it's easy to inspect if
             // something went wrong. TTL is double the PHP execution ceiling (300s) so

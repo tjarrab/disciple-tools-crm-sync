@@ -225,6 +225,65 @@ class ConnectorTest extends BrainMonkeyTestCase {
 
 // Schema transient key
 
+// conversation_status filter conditions
+
+    public function test_get_contacts_closed_status_builds_is_equal_to_condition(): void {
+        $body       = $this->call_get_contacts_capture_body( [ 'conversation_status' => 'closed' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertCount( 1, $conditions );
+        $this->assertSame( 'contactField', $conditions[0]['category'] );
+        $this->assertSame( 'status', $conditions[0]['field'] );
+        $this->assertSame( 'isEqualTo', $conditions[0]['operator'] );
+        $this->assertSame( 'closed', $conditions[0]['value'] );
+    }
+
+    public function test_get_contacts_open_or_snoozed_builds_or_condition(): void {
+        // The Respond.io API accepts a nested $or inside $and for matching two values.
+        // hasAnyOf is NOT supported for contactField status — the API returns 400.
+        $body       = $this->call_get_contacts_capture_body( [ 'conversation_status' => 'open_or_snoozed' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertCount( 1, $conditions );
+        $this->assertArrayHasKey( '$or', $conditions[0], 'open_or_snoozed must produce a nested $or condition.' );
+
+        $or_clauses = $conditions[0]['$or'];
+        $this->assertCount( 2, $or_clauses );
+
+        $values = array_column( $or_clauses, 'value' );
+        $this->assertContains( 'open', $values );
+        $this->assertContains( 'snoozed', $values );
+
+        foreach ( $or_clauses as $clause ) {
+            $this->assertSame( 'contactField', $clause['category'] );
+            $this->assertSame( 'status', $clause['field'] );
+            $this->assertSame( 'isEqualTo', $clause['operator'] );
+        }
+    }
+
+    public function test_get_contacts_empty_status_produces_no_status_condition(): void {
+        $body       = $this->call_get_contacts_capture_body( [ 'conversation_status' => '' ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertSame( [], $conditions, 'An empty conversation_status should add no condition.' );
+    }
+
+    public function test_get_contacts_lifecycle_and_status_both_present_adds_two_and_conditions(): void {
+        $body       = $this->call_get_contacts_capture_body( [
+            'lifecycle'           => 'F2F Ready',
+            'conversation_status' => 'open_or_snoozed',
+        ] );
+        $conditions = $body['filter']['$and'] ?? [];
+
+        $this->assertCount( 2, $conditions, 'Lifecycle and conversation_status should each add one entry to $and.' );
+
+        $categories = array_map( fn( $c ) => array_key_first( $c ) === '$or' ? '$or' : $c['category'], $conditions );
+        $this->assertContains( 'lifecycle', $categories );
+        $this->assertContains( '$or', $categories );
+    }
+
+// Schema transient key
+
     public function test_schema_transient_key_respond_io(): void {
         $connector = new Disciple_Tools_CRM_Sync_Connector_Respond_IO( [] );
 

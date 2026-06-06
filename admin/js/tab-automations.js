@@ -112,7 +112,10 @@
                 if ( ! filterName ) { return; } // HTML5 required validation handles this
 
                 var filterParams = {};
-                createForm.querySelectorAll( 'input[name^="filter_params_"]' ).forEach( function( inp ) {
+                // Both input and select elements must be included here. Any select-type
+                // filter field (e.g. conversation_status) would be silently dropped if
+                // the selector only matched inputs.
+                createForm.querySelectorAll( 'input[name^="filter_params_"], select[name^="filter_params_"]' ).forEach( function( inp ) {
                     var slug = inp.name.replace( 'filter_params_', '' );
                     filterParams[ slug ] = inp.value.trim();
                 } );

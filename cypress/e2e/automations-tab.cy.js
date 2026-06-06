@@ -64,6 +64,25 @@ describe( 'Automations tab', () => {
         cy.contains( filterName, { timeout: 10000 } ).should( 'be.visible' );
     } );
 
+    it( 'includes select-type filter fields in the REST request body', () => {
+        // conversation_status is a <select>. The JS form handler must collect
+        // select elements alongside inputs — if it only queries for inputs the
+        // value is silently dropped and never stored in the filter envelope.
+        const filterName = 'Cypress Status Filter ' + Date.now();
+
+        cy.intercept( 'POST', '**/disciple-tools-crm-sync/v1/saved-filters' ).as( 'createFilter' );
+
+        cy.get( '#tab-automations input[name="filter_name"]' ).clear().type( filterName );
+        cy.get( '#tab-automations select[name="interval"]' ).select( 'hourly' );
+        cy.get( '#tab-automations select[name="filter_params_conversation_status"]' ).select( 'open_or_snoozed' );
+        cy.get( 'input[name="save_filter_btn"]' ).click();
+
+        cy.wait( '@createFilter' ).then( ( interception ) => {
+            const params = interception.request.body?.filter_params ?? {};
+            expect( params.conversation_status ).to.equal( 'open_or_snoozed' );
+        } );
+    } );
+
     it( 'removes the filter from the list after clicking delete', () => {
         const filterName = 'Cypress Delete Me ' + Date.now();
 
