@@ -108,6 +108,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'description'     => __( 'e.g. F2F Ready', 'disciple-tools-crm-sync' ),
                     'exclusive_group' => 'respond_io_contact_filter',
                 ],
+                [
+                    'slug'    => 'conversation_status',
+                    'label'   => __( 'Conversation Status', 'disciple-tools-crm-sync' ),
+                    'type'    => 'select',
+                    'options' => [
+                        [ 'value' => '', 'label' => __( 'Any', 'disciple-tools-crm-sync' ) ],
+                        [ 'value' => 'open_or_snoozed', 'label' => __( 'Open or Snoozed', 'disciple-tools-crm-sync' ) ],
+                        [ 'value' => 'closed', 'label' => __( 'Closed', 'disciple-tools-crm-sync' ) ],
+                    ],
+                ],
             ];
         }
 
@@ -211,6 +221,33 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                     'field'    => null,
                     'operator' => 'isEqualTo',
                     'value'    => $filter_params['lifecycle'],
+                ];
+            }
+
+            $conversation_status = $filter_params['conversation_status'] ?? '';
+            if ( 'closed' === $conversation_status ) {
+                $and_conditions[] = [
+                    'category' => 'contactField',
+                    'field'    => 'status',
+                    'operator' => 'isEqualTo',
+                    'value'    => 'closed',
+                ];
+            } elseif ( 'open_or_snoozed' === $conversation_status ) {
+                $and_conditions[] = [
+                    '$or' => [
+                        [
+                            'category' => 'contactField',
+                            'field'    => 'status',
+                            'operator' => 'isEqualTo',
+                            'value'    => 'open',
+                        ],
+                        [
+                            'category' => 'contactField',
+                            'field'    => 'status',
+                            'operator' => 'isEqualTo',
+                            'value'    => 'snoozed',
+                        ],
+                    ],
                 ];
             }
 

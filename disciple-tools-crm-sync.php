@@ -5,7 +5,7 @@
  * Author:            tjarrab
  * Author URI:        https://github.com/tjarrab
  * Description:       Imports and syncs contacts from CRM platforms into Disciple.Tools, with message history, webhook automation, and scheduled polling.
- * Version:           1.0.6
+ * Version:           1.0.7
  * Text Domain:       disciple-tools-crm-sync
  * Domain Path:       /languages
  * GitHub Plugin URI: https://github.com/tjarrab/disciple-tools-crm-sync

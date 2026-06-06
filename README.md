@@ -232,6 +232,10 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.7
+
+- Added conversation status filter for respond.io — automations can now target contacts by conversation status
+
 ### 1.0.6
 
 - Fixed translation timeouts on contacts with long message histories — messages are now sent to AI translation in small chunks rather than one large request, with automatic retry on timeout. Chunk size and request timeout are both configurable on the Translation settings tab

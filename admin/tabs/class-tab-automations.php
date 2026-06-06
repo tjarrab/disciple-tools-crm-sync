@@ -62,8 +62,15 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                     if ( $active_connector ) {
                         foreach ( $active_connector->get_filter_fields() as $ff ) {
                             $slug = $ff['slug'] ?? '';
-                            if ( $slug ) {
-                                $filter_params[ $slug ] = sanitize_text_field( wp_unslash( $_POST[ 'filter_params_' . $slug ] ?? '' ) );
+                            if ( ! $slug ) {
+                                continue;
+                            }
+                            $raw = sanitize_text_field( wp_unslash( $_POST[ 'filter_params_' . $slug ] ?? '' ) );
+                            if ( 'select' === ( $ff['type'] ?? '' ) && ! empty( $ff['options'] ) ) {
+                                $allowed              = array_column( $ff['options'], 'value' );
+                                $filter_params[ $slug ] = in_array( $raw, $allowed, true ) ? $raw : '';
+                            } else {
+                                $filter_params[ $slug ] = $raw;
                             }
                         }
                     }
@@ -281,10 +288,22 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                     </label>
                                 </th>
                                 <td>
-                                    <input type="text"
-                                            id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
-                                            name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
-                                            class="regular-text">
+                                    <?php if ( 'select' === ( $ff['type'] ?? '' ) && ! empty( $ff['options'] ) ) : ?>
+                                        <select id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
+                                                name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
+                                                class="regular-text">
+                                            <?php foreach ( $ff['options'] as $opt ) : ?>
+                                                <option value="<?php echo esc_attr( $opt['value'] ); ?>">
+                                                    <?php echo esc_html( $opt['label'] ); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    <?php else : ?>
+                                        <input type="text"
+                                                id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
+                                                name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
+                                                class="regular-text">
+                                    <?php endif; ?>
                                     <?php if ( $ff_desc ) : ?>
                                         <p class="description"><?php echo esc_html( $ff_desc ); ?></p>
                                     <?php endif; ?>
@@ -309,11 +328,24 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                                 <label for="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>">
                                                     <?php echo esc_html( $ff['label'] ?? $ff_slug ); ?>
                                                 </label>
-                                                <input type="text"
-                                                        id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
-                                                        name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
-                                                        class="regular-text"
-                                                        data-exclusive-group="<?php echo esc_attr( $group_slug ); ?>">
+                                                <?php if ( 'select' === ( $ff['type'] ?? '' ) && ! empty( $ff['options'] ) ) : ?>
+                                                    <select id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
+                                                            name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
+                                                            class="regular-text"
+                                                            data-exclusive-group="<?php echo esc_attr( $group_slug ); ?>">
+                                                        <?php foreach ( $ff['options'] as $opt ) : ?>
+                                                            <option value="<?php echo esc_attr( $opt['value'] ); ?>">
+                                                                <?php echo esc_html( $opt['label'] ); ?>
+                                                            </option>
+                                                        <?php endforeach; ?>
+                                                    </select>
+                                                <?php else : ?>
+                                                    <input type="text"
+                                                            id="dt_crm_filter_<?php echo esc_attr( $ff_slug ); ?>"
+                                                            name="filter_params_<?php echo esc_attr( $ff_slug ); ?>"
+                                                            class="regular-text"
+                                                            data-exclusive-group="<?php echo esc_attr( $group_slug ); ?>">
+                                                <?php endif; ?>
                                                 <?php if ( $ff_desc ) : ?>
                                                     <p class="description"><?php echo esc_html( $ff_desc ); ?></p>
                                                 <?php endif; ?>

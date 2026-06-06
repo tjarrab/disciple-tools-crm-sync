@@ -101,14 +101,29 @@ export default function FilterBar( { onSubmit, isLoading } ) {
                             <label htmlFor={ `crm-filter-${ field.slug }` } className="screen-reader-text">
                                 { field.label }
                             </label>
-                            <input
-                                id={ `crm-filter-${ field.slug }` }
-                                type="text"
-                                className="regular-text"
-                                placeholder={ field.placeholder || field.label }
-                                value={ params[ field.slug ] || '' }
-                                onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
-                            />
+                            { field.type === 'select' && field.options ? (
+                                <select
+                                    id={ `crm-filter-${ field.slug }` }
+                                    className="regular-text"
+                                    value={ params[ field.slug ] || '' }
+                                    onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
+                                >
+                                    { field.options.map( ( opt ) => (
+                                        <option key={ opt.value } value={ opt.value }>
+                                            { opt.label }
+                                        </option>
+                                    ) ) }
+                                </select>
+                            ) : (
+                                <input
+                                    id={ `crm-filter-${ field.slug }` }
+                                    type="text"
+                                    className="regular-text"
+                                    placeholder={ field.placeholder || field.label }
+                                    value={ params[ field.slug ] || '' }
+                                    onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
+                                />
+                            ) }
                         </div>
                     );
                 }
@@ -122,14 +137,29 @@ export default function FilterBar( { onSubmit, isLoading } ) {
                                     <label htmlFor={ `crm-filter-${ field.slug }` }>
                                         { field.label }
                                     </label>
-                                    <input
-                                        id={ `crm-filter-${ field.slug }` }
-                                        type="text"
-                                        className="regular-text"
-                                        placeholder={ field.placeholder || '' }
-                                        value={ params[ field.slug ] || '' }
-                                        onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
-                                    />
+                                    { field.type === 'select' && field.options ? (
+                                        <select
+                                            id={ `crm-filter-${ field.slug }` }
+                                            className="regular-text"
+                                            value={ params[ field.slug ] || '' }
+                                            onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
+                                        >
+                                            { field.options.map( ( opt ) => (
+                                                <option key={ opt.value } value={ opt.value }>
+                                                    { opt.label }
+                                                </option>
+                                            ) ) }
+                                        </select>
+                                    ) : (
+                                        <input
+                                            id={ `crm-filter-${ field.slug }` }
+                                            type="text"
+                                            className="regular-text"
+                                            placeholder={ field.placeholder || '' }
+                                            value={ params[ field.slug ] || '' }
+                                            onChange={ ( e ) => handleChange( field.slug, e.target.value ) }
+                                        />
+                                    ) }
                                 </div>
                                 { idx < item.fields.length - 1 && (
                                     <span className="dt-crm-or-separator" aria-hidden="true">
