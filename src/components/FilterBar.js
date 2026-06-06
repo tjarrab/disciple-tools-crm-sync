@@ -98,9 +98,15 @@ export default function FilterBar( { onSubmit, isLoading } ) {
                     const field = item.field;
                     return (
                         <div key={ field.slug }>
-                            <label htmlFor={ `crm-filter-${ field.slug }` } className="screen-reader-text">
-                                { field.label }
-                            </label>
+                            { field.type === 'select' ? (
+                                <label htmlFor={ `crm-filter-${ field.slug }` }>
+                                    { field.label }
+                                </label>
+                            ) : (
+                                <label htmlFor={ `crm-filter-${ field.slug }` } className="screen-reader-text">
+                                    { field.label }
+                                </label>
+                            ) }
                             { field.type === 'select' && field.options ? (
                                 <select
                                     id={ `crm-filter-${ field.slug }` }

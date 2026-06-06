@@ -406,11 +406,9 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 $schema    = [];
             }
 
-            // Merge connector-specific synthetic fields (e.g. Lifecycle). This method
-            // requires no credentials so it is safe on the display-only instance used here.
-            if ( null === $empty_msg && $connector instanceof Disciple_Tools_CRM_Sync_Abstract_Connector ) {
-                $schema = array_merge( $schema, $connector->get_synthetic_schema_fields() );
-            }
+            // Synthetic fields (e.g. Lifecycle) are already included in the transient
+            // by get_field_schema() on the connector side — they're merged there so
+            // detect_schema_drift() sees them too. Don't add them again here.
 
             // Schema is a flat array of field objects after API client normalisation.
             $respond_fields = $schema;

@@ -201,6 +201,20 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Config' ) ) {
 
             $changed = false;
             foreach ( $mapping as $respond_key => &$entry ) {
+                // Internal pseudo-keys (e.g. __respond_io_messages__) are not real
+                // Respond.io API fields and will never appear in the schema. Checking
+                // them against the live schema would always flag them as broken, which
+                // is misleading — messages are still there and working fine. If a stale
+                // 'broken' flag was written by an older version of this code, clear it
+                // now so the false-positive warning disappears on the next refresh.
+                if ( str_starts_with( $respond_key, '__' ) && str_ends_with( $respond_key, '__' ) ) {
+                    if ( ! empty( $entry['broken'] ) ) {
+                        unset( $entry['broken'] );
+                        $changed = true;
+                    }
+                    continue;
+                }
+
                 if ( isset( $live_keys[ $respond_key ] ) ) {
                     // Field is present — clear any stale broken flag.
                     if ( ! empty( $entry['broken'] ) ) {

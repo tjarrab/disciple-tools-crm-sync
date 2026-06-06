@@ -232,6 +232,10 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.8
+
+- Fixing a couple schema mapping bugs in respond.io 
+
 ### 1.0.7
 
 - Added conversation status filter for respond.io — automations can now target contacts by conversation status

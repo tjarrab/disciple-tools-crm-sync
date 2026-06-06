@@ -110,7 +110,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
                 ],
                 [
                     'slug'    => 'conversation_status',
-                    'label'   => __( 'Conversation Status', 'disciple-tools-crm-sync' ),
+                    'label'   => __( 'Status', 'disciple-tools-crm-sync' ),
                     'type'    => 'select',
                     'options' => [
                         [ 'value' => '', 'label' => __( 'Any', 'disciple-tools-crm-sync' ) ],
@@ -150,8 +150,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ) ) {
             if ( is_wp_error( $schema ) ) {
                 return $schema;
             }
-            // Merge in synthetic top-level profile fields (e.g. Lifecycle) so they
-            // appear in drift-detection and import alongside real API custom fields.
+            // Merge synthetic top-level profile fields (e.g. Lifecycle) before returning.
+            // Doing it here means detect_schema_drift() sees them (so a saved Lifecycle
+            // mapping is never flagged as broken) and handle_get_schema() writes them
+            // into the transient, so render_field_mapping() doesn't need to add them again.
             return array_merge( $schema, $this->get_synthetic_schema_fields() );
         }
 
