@@ -21,7 +21,7 @@ set "ZIP_OUTPUT=%SCRIPT_DIR%..\disciple-tools-crm-sync-%PLUGIN_VERSION%.zip"
 :: ----------------------------------------------------------
 echo [0/4] Syncing version-control.json from plugin header...
 set "PS_PLUGIN=%PLUGIN_DIR%"
-powershell -NoProfile -Command "$plugin = [IO.Path]::GetFullPath($Env:PS_PLUGIN); $php = Join-Path $plugin 'disciple-tools-crm-sync.php'; $json = Join-Path $plugin 'version-control.json'; $line = (Get-Content $php | Where-Object { $_ -match 'Version:' } | Select-Object -First 1); if ($line -match 'Version:\s*(.+)') { $v = $Matches[1].Trim(); $j = Get-Content $json -Raw | ConvertFrom-Json; $j.version = $v; $j.download_url = ('https://github.com/' + $j.git_owner + '/' + $j.git_repo + '/releases/download/v' + $v + '/' + $j.git_repo + '-' + $v + '.zip'); [IO.File]::WriteAllText($json, ($j | ConvertTo-Json -Depth 5), [Text.Encoding]::UTF8); Write-Host ('      Version: ' + $v) } else { Write-Error 'Could not parse Version from disciple-tools-crm-sync.php'; exit 1 }"
+powershell -NoProfile -Command "$plugin = [IO.Path]::GetFullPath($Env:PS_PLUGIN); $php = Join-Path $plugin 'disciple-tools-crm-sync.php'; $json = Join-Path $plugin 'version-control.json'; $line = (Get-Content $php | Where-Object { $_ -match 'Version:' } | Select-Object -First 1); if ($line -match 'Version:\s*(.+)') { $v = $Matches[1].Trim(); $j = Get-Content $json -Raw | ConvertFrom-Json; $j.version = $v; $j.download_url = ('https://github.com/' + $j.git_owner + '/' + $j.git_repo + '/releases/download/v' + $v + '/' + $j.git_repo + '-' + $v + '.zip'); $utf8NoBom = New-Object System.Text.UTF8Encoding $false; [IO.File]::WriteAllText($json, ($j | ConvertTo-Json -Depth 5), $utf8NoBom); Write-Host ('       Version: ' + $v) } else { Write-Error 'Could not parse Version from disciple-tools-crm-sync.php'; exit 1 }"
 if %ERRORLEVEL% NEQ 0 (
     echo.
     echo ERROR: Failed to sync version-control.json. Aborting.
@@ -42,7 +42,7 @@ if %ERRORLEVEL% NEQ 0 (
     pause
     exit /b 1
 )
-echo       Build succeeded.
+echo        Build succeeded.
 echo.
 
 :: ----------------------------------------------------------
@@ -68,7 +68,7 @@ for %%F in (config.php disciple-tools-crm-sync.php index.php LICENSE README.md u
     )
 )
 
-echo       Files staged.
+echo        Files staged.
 echo.
 
 :: ----------------------------------------------------------
@@ -104,7 +104,7 @@ for %%F in (
     admin\admin-menu-and-tabs.php
 ) do (
     if not exist "%STAGE_ROOT%\%%F" (
-        echo       MISSING: %%F
+        echo        MISSING: %%F
         set "VALIDATION_FAILED=1"
     )
 )
@@ -117,7 +117,7 @@ if "!VALIDATION_FAILED!"=="1" (
     pause
     exit /b 1
 )
-echo       All required files present.
+echo        All required files present.
 echo.
 
 :: ----------------------------------------------------------
@@ -148,7 +148,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 rmdir /s /q "%STAGE_DIR%"
 
-echo       Done.
+echo        Done.
 echo.
 echo =============================================
 echo  Release zip: %ZIP_OUTPUT%
