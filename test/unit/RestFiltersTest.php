@@ -132,4 +132,43 @@ class RestFiltersTest extends BrainMonkeyTestCase {
         $this->assertSame( 'purged', $data['status'] );
         $this->assertSame( 1, $data['filters_cleared'], 'Orphaned events must be counted even when not in the manifest.' );
     }
+
+// handle_delete_filter — retry behavior when wp_clear_scheduled_hook doesn't take effect immediately
+
+    public function test_delete_filter_retries_clear_when_event_still_scheduled(): void {
+        $manifest = [ 'filter_abc' ];
+
+        Functions\when( 'sanitize_key' )->returnArg();
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) use ( $manifest ) {
+            if ( 'dt_crm_sync_saved_filters' === $key ) {
+                return $manifest;
+            }
+            return $default;
+        } );
+
+        // Initial clear (poll + legacy), then one retry clear once wp_next_scheduled
+        // reports the event is still present.
+        Functions\expect( 'wp_clear_scheduled_hook' )
+            ->times( 3 )
+            ->andReturn( false );
+        Functions\expect( 'wp_next_scheduled' )
+            ->once()
+            ->andReturn( true );
+        Functions\when( 'delete_transient' )->justReturn( true );
+        Functions\expect( 'delete_option' )
+            ->once()
+            ->andReturn( true );
+        Functions\expect( 'update_option' )
+            ->once()
+            ->with( 'dt_crm_sync_saved_filters', [] )
+            ->andReturn( true );
+
+        $request = new WP_REST_Request( 'DELETE', '', [ 'id' => 'filter_abc' ] );
+
+        $controller = new Disciple_Tools_CRM_Sync_REST_Filters();
+        $response   = $controller->handle_delete_filter( $request );
+
+        $this->assertSame( 200, $response->get_status() );
+        $this->assertSame( 'deleted', $response->get_data()['status'] );
+    }
 }

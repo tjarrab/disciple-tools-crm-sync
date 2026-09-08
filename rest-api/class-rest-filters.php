@@ -188,11 +188,14 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Filters' ) ) {
             wp_clear_scheduled_hook( 'dt_crm_sync_poll_' . $filter_id ); // legacy cleanup
             delete_transient( 'dt_crm_sync_poll_lock_' . $filter_id );
 
-            // Confirm the event is actually gone. In some environments wp_clear_scheduled_hook
-            // can silently fail (e.g. serialization quirks in the cron option), so fall back
-            // to removing the entry from the cron array directly.
+            // Retry once in case the first clear raced with another cron write. Never
+            // patch the raw cron option directly -- that's what caused this in the first
+            // place (it can clobber other plugins' entries in the same shared option).
             if ( wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
-                self::force_remove_cron_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+                wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG && wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
+                    error_log( 'dt-crm-sync: dt_crm_sync_poll event still scheduled for ' . $filter_id . ' after two clear attempts.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug-only logging for a genuinely unexpected cron state.
+                }
             }
 
             delete_option( 'dt_crm_sync_saved_filter_' . $filter_id );
@@ -284,7 +287,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Filters' ) ) {
                 wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
                 wp_clear_scheduled_hook( 'dt_crm_sync_poll_' . $filter_id ); // legacy
                 if ( wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
-                    self::force_remove_cron_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+                    wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+                    if ( defined( 'WP_DEBUG' ) && WP_DEBUG && wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
+                        error_log( 'dt-crm-sync: dt_crm_sync_poll event still scheduled for ' . $filter_id . ' after two clear attempts.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug-only logging for a genuinely unexpected cron state.
+                    }
                 }
                 delete_option( 'dt_crm_sync_saved_filter_' . $filter_id );
                 $cleared++;
@@ -294,37 +300,6 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Filters' ) ) {
             update_option( 'dt_crm_sync_saved_filters', [] );
 
             return new WP_REST_Response( [ 'status' => 'purged', 'filters_cleared' => $cleared ], 200 );
-        }
-
-        /**
-         * Walk the raw cron array and remove a specific hook+args pair directly.
-         * Only called when wp_clear_scheduled_hook() didn't do the job — usually
-         * a sign the cron option is in an unexpected state on this environment.
-         */
-        private static function force_remove_cron_hook( string $hook, array $args ): void {
-            $cron = _get_cron_array();
-            if ( ! is_array( $cron ) ) {
-                return;
-            }
-
-            // WP keys each scheduled event internally by the md5 of the serialized args.
-            $key = md5( serialize( $args ) ); // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_serialize -- Reproducing WP's internal cron key scheme.
-            foreach ( $cron as $timestamp => $hooks ) {
-                if ( isset( $hooks[ $hook ][ $key ] ) ) {
-                    unset( $cron[ $timestamp ][ $hook ][ $key ] );
-                    if ( empty( $cron[ $timestamp ][ $hook ] ) ) {
-                        unset( $cron[ $timestamp ][ $hook ] );
-                    }
-                    if ( empty( $cron[ $timestamp ] ) ) {
-                        unset( $cron[ $timestamp ] );
-                    }
-                }
-            }
-            _set_cron_array( $cron );
-
-            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-                error_log( 'dt-crm-sync: force_remove_cron_hook fired for ' . $hook . ' — wp_clear_scheduled_hook did not remove the event.' ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Debug-only logging for a genuinely unexpected cron state.
-            }
         }
 
         /**

@@ -506,6 +506,22 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                 }
             }
 
+            // Manifest filters with no matching cron entry above -- the failure mode
+            // this panel exists to catch (a dropped recurring poll silently stops imports).
+            $scheduled_filter_ids = array_column( $plugin_poll_events, 'filter_id' );
+            foreach ( array_diff( $manifest, $scheduled_filter_ids ) as $missing_id ) {
+                $missing_id = sanitize_key( $missing_id );
+                if ( '' === $missing_id ) {
+                    continue;
+                }
+                $plugin_poll_events[] = [
+                    'filter_id'   => $missing_id,
+                    'next_ts'     => null,
+                    'in_manifest' => true,
+                    'missing'     => true,
+                ];
+            }
+
             // DT core hooks we want to show in the read-only section.
             $dt_core_hook_labels = [
                 'dt_daily_notification_schedule' => __( 'DT Notifications Scheduler (daily)', 'disciple-tools-crm-sync' ),
@@ -542,9 +558,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                             <?php foreach ( $plugin_poll_events as $ev ) : ?>
                                 <tr>
                                     <td><code><?php echo esc_html( $ev['filter_id'] ); ?></code></td>
-                                    <td><?php echo esc_html( wp_date( 'Y-m-d H:i', $ev['next_ts'] ) ); ?></td>
+                                    <td><?php echo $ev['next_ts'] ? esc_html( wp_date( 'Y-m-d H:i', $ev['next_ts'] ) ) : '&#8212;'; ?></td>
                                     <td>
-                                        <?php if ( $ev['in_manifest'] ) : ?>
+                                        <?php if ( ! empty( $ev['missing'] ) ) : ?>
+                                            <span style="color: #dc3232;">&#9888; <?php esc_html_e( 'Missing — no cron event scheduled for this filter', 'disciple-tools-crm-sync' ); ?></span>
+                                        <?php elseif ( $ev['in_manifest'] ) : ?>
                                             <span style="color: #46b450;">&#10003; <?php esc_html_e( 'Active', 'disciple-tools-crm-sync' ); ?></span>
                                         <?php else : ?>
                                             <span style="color: #dc3232;">&#9888; <?php esc_html_e( 'Orphaned — no matching saved filter', 'disciple-tools-crm-sync' ); ?></span>

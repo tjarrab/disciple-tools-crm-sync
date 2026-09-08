@@ -107,8 +107,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                     $this->save_field_mapping( $values['field_mapping'] );
                 }
 
+                $email_notice = $this->save_email_notifier_settings( $values );
+
                 if ( '' === $notice ) {
-                    $notice = 'success';
+                    $notice = '' !== $email_notice ? $email_notice : 'success';
                 }
             }
 
@@ -134,6 +136,15 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 ? $active_connector->get_label()
                 : __( 'CRM', 'disciple-tools-crm-sync' );
 
+            $email_settings = wp_parse_args(
+                get_option( 'dt_crm_sync_email_notifier_settings', [] ),
+                [
+                    'enabled'    => false,
+                    'recipients' => [],
+                    'send_time'  => '06:00',
+                ]
+            );
+
 // Admin notices
             if ( 'success' === $notice ) {
                 echo '<div class="notice notice-success is-dismissible"><p>'
@@ -142,6 +153,10 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
             } elseif ( 'encrypt_error' === $notice ) {
                 echo '<div class="notice notice-error"><p>'
                     . esc_html__( 'Encryption failed — existing credential was preserved. Verify OpenSSL is functional.', 'disciple-tools-crm-sync' )
+                    . '</p></div>';
+            } elseif ( 'email_no_recipients' === $notice ) {
+                echo '<div class="notice notice-error"><p>'
+                    . esc_html__( 'Email Notifications disabled — no valid recipient addresses were provided.', 'disciple-tools-crm-sync' )
                     . '</p></div>';
             }
 
@@ -306,6 +321,65 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 </p>
                 <?php $this->render_field_mapping( $active_connector ); ?>
 
+                <h2><?php esc_html_e( 'Email Notifications', 'disciple-tools-crm-sync' ); ?></h2>
+                <table class="form-table" role="presentation">
+                    <tr>
+                        <th scope="row"><?php esc_html_e( 'Daily Digest', 'disciple-tools-crm-sync' ); ?></th>
+                        <td>
+                            <label>
+                                <input type="checkbox"
+                                        name="email_notifier_enabled"
+                                        value="1"
+                                        <?php checked( ! empty( $email_settings['enabled'] ) ); ?>>
+                                <?php esc_html_e( 'Email a daily summary of imported contacts', 'disciple-tools-crm-sync' ); ?>
+                            </label>
+                            <p class="description">
+                                <?php esc_html_e( 'Sends a link to every contact imported since the last digest. If nothing was imported, the email just says so.', 'disciple-tools-crm-sync' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_crm_email_notifier_recipients"><?php esc_html_e( 'Recipients', 'disciple-tools-crm-sync' ); ?></label>
+                        </th>
+                        <td>
+                            <textarea id="dt_crm_email_notifier_recipients"
+                                        name="email_notifier_recipients"
+                                        class="regular-text"
+                                        rows="4"
+                                        cols="40"
+                                        placeholder="one@example.org&#10;two@example.org"><?php echo esc_textarea( implode( "\n", (array) $email_settings['recipients'] ) ); ?></textarea>
+                            <p class="description">
+                                <?php esc_html_e( 'One email address per line (commas also work). Invalid addresses are dropped when you save.', 'disciple-tools-crm-sync' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_crm_email_notifier_send_time"><?php esc_html_e( 'Send Time', 'disciple-tools-crm-sync' ); ?></label>
+                        </th>
+                        <td>
+                            <input type="time"
+                                    id="dt_crm_email_notifier_send_time"
+                                    name="email_notifier_send_time"
+                                    value="<?php echo esc_attr( $email_settings['send_time'] ); ?>">
+                            <p class="description">
+                                <?php esc_html_e( 'Site time zone.', 'disciple-tools-crm-sync' ); ?>
+                                <?php
+                                $next_digest = wp_next_scheduled( 'dt_crm_sync_email_digest' );
+                                if ( ! empty( $email_settings['enabled'] ) && $next_digest ) :
+                                    ?>
+                                    <?php echo esc_html( sprintf(
+                                        /* translators: %s: next scheduled send date/time */
+                                        __( 'Next digest: %s', 'disciple-tools-crm-sync' ),
+                                        wp_date( 'Y-m-d H:i', $next_digest )
+                                    ) ); ?>
+                                <?php endif; ?>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+
                 <h2><?php esc_html_e( 'Data Retention', 'disciple-tools-crm-sync' ); ?></h2>
                 <table class="form-table" role="presentation">
                     <tr>
@@ -339,6 +413,69 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
             // Interaction scripts for this tab are loaded externally via
             // wp_enqueue_script( 'dt-crm-sync-tab-config' ) in enqueue_scripts().
             // window.dtCrmSync (populated by wp_localize_script) provides API data.
+        }
+
+        /**
+         * Persist the email notifier settings and (re)schedule the digest cron
+         * to match. Recipients are re-parsed from the raw textarea value rather
+         * than $values because dt_recursive_sanitize_array() runs sanitize_text_field()
+         * over every POST value, which collapses newlines and would break the
+         * one-address-per-line parsing below.
+         *
+         * @param array $values Sanitized POST values (used only for the checkbox and send_time).
+         * @return string '' on success, or a notice key for the caller to display.
+         */
+        private function save_email_notifier_settings( array $values ): string {
+            $previous = wp_parse_args(
+                get_option( 'dt_crm_sync_email_notifier_settings', [] ),
+                [ 'enabled' => false, 'send_time' => '06:00' ]
+            );
+
+            $raw_recipients = wp_unslash( $_POST['email_notifier_recipients'] ?? '' ); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing -- Nonce already verified by check_admin_referer() before this method is called; each entry is validated with is_email() below, reading $values here would have already lost the newlines.
+
+            $recipients = [];
+            foreach ( preg_split( '/[,\r\n]+/', $raw_recipients ) as $candidate ) {
+                $candidate = sanitize_email( trim( $candidate ) );
+                if ( $candidate && is_email( $candidate ) && ! in_array( $candidate, $recipients, true ) ) {
+                    $recipients[] = $candidate;
+                }
+            }
+            $recipients = array_slice( $recipients, 0, 50 );
+
+            $send_time = sanitize_text_field( $values['email_notifier_send_time'] ?? '06:00' );
+            if ( ! preg_match( '/^(0\d|1\d|2[0-3]):[0-5]\d$/', $send_time ) ) {
+                $send_time = '06:00';
+            }
+
+            $enabled = ! empty( $values['email_notifier_enabled'] );
+            $notice  = '';
+            if ( $enabled && empty( $recipients ) ) {
+                $enabled = false;
+                $notice  = 'email_no_recipients';
+            }
+
+            $email_settings = [
+                'enabled'    => $enabled,
+                'recipients' => $recipients,
+                'send_time'  => $send_time,
+            ];
+
+            update_option( 'dt_crm_sync_email_notifier_settings', $email_settings );
+
+            // Only touch the cron table when the schedule itself actually needs to
+            // change -- this method runs on every Config tab save (credentials,
+            // field mapping, anything), and clearing/re-adding a cron event on every
+            // unrelated save is exactly the kind of avoidable write to the shared
+            // WP cron option we just spent effort eliminating elsewhere.
+            $schedule_changed = $enabled !== ! empty( $previous['enabled'] )
+                || $send_time !== ( $previous['send_time'] ?? '06:00' )
+                || ! wp_next_scheduled( 'dt_crm_sync_email_digest' );
+
+            if ( $schedule_changed ) {
+                Disciple_Tools_CRM_Sync::reschedule_email_digest( $email_settings );
+            }
+
+            return $notice;
         }
 
         /**

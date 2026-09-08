@@ -29,6 +29,7 @@ abstract class BrainMonkeyTestCase extends \PHPUnit\Framework\TestCase {
         $wpdb->next_query_result        = 0;
         DT_Posts::reset();
         Disciple_Tools_CRM_Sync::$test_decrypt_fn = null;
+        Disciple_Tools_CRM_Sync::$reschedule_email_digest_calls = [];
     }
 
     /**

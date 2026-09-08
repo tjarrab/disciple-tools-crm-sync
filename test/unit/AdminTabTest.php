@@ -319,6 +319,263 @@ class AdminTabTest extends BrainMonkeyTestCase {
         );
     }
 
+// Tab_Config — email notifier settings
+
+    private function mock_config_get_option_for_email_tests(): void {
+        Functions\when( 'get_option' )->alias(
+            static function ( string $key, $default = false ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    return [];
+                }
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    return [];
+                }
+                return $default;
+            }
+        );
+    }
+
+    /**
+     * A textarea of one-per-line addresses must be parsed, deduped, and stored
+     * alongside the requested send time.
+     */
+    public function test_tab_config_saves_valid_recipients_and_send_time(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_enabled'    => '1',
+            'email_notifier_recipients' => "one@example.org\ntwo@example.org",
+            'email_notifier_send_time'  => '07:30',
+        ];
+
+        $this->mock_config_get_option_for_email_tests();
+
+        $saved = null;
+        Functions\when( 'update_option' )->alias(
+            static function ( string $key, $value ) use ( &$saved ) {
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    $saved = $value;
+                }
+            }
+        );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $this->assertTrue( $saved['enabled'] );
+        $this->assertSame( [ 'one@example.org', 'two@example.org' ], $saved['recipients'] );
+        $this->assertSame( '07:30', $saved['send_time'] );
+    }
+
+    /**
+     * Malformed addresses in the textarea must be dropped and duplicates
+     * collapsed, leaving only the valid, deduped entries.
+     */
+    public function test_tab_config_filters_out_invalid_email_addresses(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_enabled'    => '1',
+            'email_notifier_recipients' => 'valid@example.org, not-an-email, valid@example.org',
+            'email_notifier_send_time'  => '06:00',
+        ];
+
+        $this->mock_config_get_option_for_email_tests();
+
+        $saved = null;
+        Functions\when( 'update_option' )->alias(
+            static function ( string $key, $value ) use ( &$saved ) {
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    $saved = $value;
+                }
+            }
+        );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $this->assertSame( [ 'valid@example.org' ], $saved['recipients'], 'Only the single valid address must survive.' );
+    }
+
+    /**
+     * Enabling the digest with no valid recipients must be forced back off,
+     * with a notice explaining why -- never silently schedule a cron with
+     * nobody to send to.
+     */
+    public function test_tab_config_disables_email_when_no_valid_recipients(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_enabled'    => '1',
+            'email_notifier_recipients' => 'not-an-email',
+            'email_notifier_send_time'  => '06:00',
+        ];
+
+        $this->mock_config_get_option_for_email_tests();
+
+        $saved = null;
+        Functions\when( 'update_option' )->alias(
+            static function ( string $key, $value ) use ( &$saved ) {
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    $saved = $value;
+                }
+            }
+        );
+
+        ob_start();
+        try {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+            $output = ob_get_contents();
+        } finally {
+            ob_end_clean();
+        }
+
+        $this->assertFalse( $saved['enabled'], 'Enabling with zero valid recipients must be forced back to disabled.' );
+        $this->assertStringContainsString( 'no valid recipient', $output );
+    }
+
+    /**
+     * An invalid send_time value must fall back to the documented default
+     * rather than being stored (and later fed into wp_schedule_event()) as-is.
+     */
+    public function test_tab_config_falls_back_to_default_send_time_when_invalid(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_recipients' => 'valid@example.org',
+            'email_notifier_send_time'  => 'not-a-time',
+        ];
+
+        $this->mock_config_get_option_for_email_tests();
+
+        $saved = null;
+        Functions\when( 'update_option' )->alias(
+            static function ( string $key, $value ) use ( &$saved ) {
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    $saved = $value;
+                }
+            }
+        );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $this->assertSame( '06:00', $saved['send_time'] );
+    }
+
+// Tab_Config — email notifier reschedule diffing (avoids unnecessary cron writes)
+
+    public function test_tab_config_does_not_reschedule_when_email_settings_unchanged(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_enabled'    => '1',
+            'email_notifier_recipients' => 'same@example.org',
+            'email_notifier_send_time'  => '06:00',
+        ];
+
+        Functions\when( 'get_option' )->alias(
+            static function ( string $key, $default = false ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    return [];
+                }
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    return [ 'enabled' => true, 'recipients' => [ 'same@example.org' ], 'send_time' => '06:00' ];
+                }
+                return $default;
+            }
+        );
+        Functions\when( 'wp_next_scheduled' )->justReturn( time() + 3600 );
+        Functions\when( 'update_option' )->justReturn( true );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $this->assertEmpty(
+            Disciple_Tools_CRM_Sync::$reschedule_email_digest_calls,
+            'Saving with unchanged email settings must not touch the cron table.'
+        );
+    }
+
+    public function test_tab_config_reschedules_when_send_time_changes(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_enabled'    => '1',
+            'email_notifier_recipients' => 'same@example.org',
+            'email_notifier_send_time'  => '09:00',
+        ];
+
+        Functions\when( 'get_option' )->alias(
+            static function ( string $key, $default = false ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    return [];
+                }
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    return [ 'enabled' => true, 'recipients' => [ 'same@example.org' ], 'send_time' => '06:00' ];
+                }
+                return $default;
+            }
+        );
+        Functions\when( 'wp_next_scheduled' )->justReturn( time() + 3600 );
+        Functions\when( 'update_option' )->justReturn( true );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $this->assertCount( 1, Disciple_Tools_CRM_Sync::$reschedule_email_digest_calls, 'A changed send_time must trigger a reschedule.' );
+        $this->assertSame( '09:00', Disciple_Tools_CRM_Sync::$reschedule_email_digest_calls[0]['send_time'] );
+    }
+
+    public function test_tab_config_reschedules_when_cron_missing_even_if_unchanged(): void {
+        $_POST = [
+            'dt_crm_sync_nonce'         => 'test_nonce',
+            'save_settings'             => '1',
+            'active_connector'          => 'respond_io',
+            'connectors'                => [ 'respond_io' => [] ],
+            'email_notifier_enabled'    => '1',
+            'email_notifier_recipients' => 'same@example.org',
+            'email_notifier_send_time'  => '06:00',
+        ];
+
+        Functions\when( 'get_option' )->alias(
+            static function ( string $key, $default = false ) {
+                if ( 'dt_crm_sync_settings' === $key ) {
+                    return [];
+                }
+                if ( 'dt_crm_sync_email_notifier_settings' === $key ) {
+                    return [ 'enabled' => true, 'recipients' => [ 'same@example.org' ], 'send_time' => '06:00' ];
+                }
+                return $default;
+            }
+        );
+        Functions\when( 'wp_next_scheduled' )->justReturn( false ); // event missing from the cron table
+        Functions\when( 'update_option' )->justReturn( true );
+
+        $this->run_tab_content( static function () {
+            ( new Disciple_Tools_CRM_Sync_Tab_Config() )->content();
+        } );
+
+        $this->assertCount( 1, Disciple_Tools_CRM_Sync::$reschedule_email_digest_calls, 'A missing cron event must be restored even when settings are unchanged.' );
+    }
+
 // Tab_Automations — create filter
 
     /**

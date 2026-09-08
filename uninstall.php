@@ -22,6 +22,7 @@ global $wpdb;
 // Clear all scheduled cron hooks
 
 wp_clear_scheduled_hook( 'dt_crm_sync_process_batch' );
+wp_clear_scheduled_hook( 'dt_crm_sync_email_digest' );
 
 // Clear all scheduled instances of the unified poll hook (one entry per saved filter_id).
 wp_clear_scheduled_hook( 'dt_crm_sync_poll' );
@@ -48,6 +49,8 @@ $dt_crm_sync_settings = get_option( 'dt_crm_sync_settings', [] );
 delete_option( 'dt_crm_sync_saved_filters' );
 delete_option( 'dt_crm_sync_settings' );
 delete_option( 'dt_crm_sync_field_mapping' );
+delete_option( 'dt_crm_sync_email_notifier_settings' );
+delete_option( 'dt_crm_sync_email_digest_last_sent' );
 
 // Delete all plugin transients in one pass. Using a wildcard query handles the
 // Respond.io field-schema cache, Gemini model list, Metricool conversation cache,

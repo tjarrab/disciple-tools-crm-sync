@@ -14,6 +14,27 @@
 if ( ! function_exists( 'wp_parse_url' ) ) {
     function wp_parse_url( $url, $component = -1 ): mixed { return parse_url( $url, $component ); } // phpcs:ignore
 }
+if ( ! function_exists( 'wp_parse_args' ) ) {
+    function wp_parse_args( $args, $defaults = [] ): array { return array_merge( $defaults, is_array( $args ) ? $args : [] ); } // phpcs:ignore
+}
+if ( ! function_exists( 'is_email' ) ) {
+    function is_email( $email ): string|false { return false !== filter_var( $email, FILTER_VALIDATE_EMAIL ) ? $email : false; } // phpcs:ignore
+}
+if ( ! function_exists( 'sanitize_email' ) ) {
+    function sanitize_email( $email ): string { return (string) filter_var( $email, FILTER_SANITIZE_EMAIL ); } // phpcs:ignore
+}
+if ( ! function_exists( 'wp_mail' ) ) {
+    function wp_mail( $to, $subject, $message, $headers = '', $attachments = [] ): bool { return true; } // phpcs:ignore
+}
+if ( ! function_exists( 'get_bloginfo' ) ) {
+    function get_bloginfo( $show = '' ): string { return 'Test Site'; } // phpcs:ignore
+}
+if ( ! function_exists( 'get_permalink' ) ) {
+    function get_permalink( $post = 0 ): string|false { return 'http://example.com/?p=' . (int) $post; } // phpcs:ignore
+}
+if ( ! function_exists( 'esc_textarea' ) ) {
+    function esc_textarea( $text ): string { return htmlspecialchars( (string) $text, ENT_QUOTES ); } // phpcs:ignore
+}
 if ( ! function_exists( 'wp_timezone' ) ) {
     function wp_timezone() { // phpcs:ignore
         return new DateTimeZone( 'UTC' );

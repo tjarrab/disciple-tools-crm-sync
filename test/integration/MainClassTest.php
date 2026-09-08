@@ -28,7 +28,23 @@ class MainClassTest extends TestCase {
             }
         }
         delete_option( 'dt_crm_sync_saved_filters' );
+        delete_transient( 'dt_crm_sync_cron_reconcile_lock' );
+        wp_clear_scheduled_hook( 'dt_crm_sync_email_digest' );
+        delete_option( 'dt_crm_sync_email_notifier_settings' );
         parent::tearDown();
+    }
+
+    /** Return the most-recently inserted sync log row. */
+    private function last_log_row(): ?stdClass {
+        global $wpdb;
+
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery,WordPress.DB.DirectDatabaseQuery.NoCaching -- Test utility; caching would mask between-test state.
+        return $wpdb->get_row(
+            $wpdb->prepare(
+                'SELECT * FROM `%1s` ORDER BY id DESC LIMIT 1',
+                $wpdb->prefix . 'dt_crm_sync_logs'
+            )
+        );
     }
 
 // add_cron_schedules
@@ -168,5 +184,125 @@ class MainClassTest extends TestCase {
         $dt->setTimestamp( $ts );
         $this->assertSame( '23', $dt->format( 'H' ), 'Daily filter must fire at hour 23.' );
         $this->assertSame( '59', $dt->format( 'i' ), 'Daily filter must fire at minute 59.' );
+    }
+
+    public function test_create_filter_logs_failure_when_schedule_event_is_blocked(): void {
+        add_filter( 'pre_schedule_event', '__return_false', 10, 2 );
+
+        $filter_id = Disciple_Tools_CRM_Sync::create_filter( 'Blocked Schedule Test', 'hourly', [], '00:00', 'respond_io' );
+
+        remove_filter( 'pre_schedule_event', '__return_false', 10 );
+
+        $this->assertFalse(
+            wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ),
+            'Nothing should be scheduled when pre_schedule_event blocks it.'
+        );
+
+        $row = $this->last_log_row();
+        $this->assertSame( $filter_id, $row->contact_id );
+        $this->assertSame( 'failed', $row->status );
+    }
+
+// reconcile_scheduled_polls
+
+    public function test_reconcile_reschedules_missing_poll_event(): void {
+        $filter_id = Disciple_Tools_CRM_Sync::create_filter( 'Reconcile Missing Test', 'hourly', [], '00:00', 'respond_io' );
+        wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+        $this->assertFalse( wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ), 'Event must be gone before reconciliation runs.' );
+
+        Disciple_Tools_CRM_Sync::reconcile_scheduled_polls();
+
+        $this->assertNotFalse(
+            wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ),
+            'A missing recurring poll for an active filter must be restored.'
+        );
+    }
+
+    public function test_reconcile_does_not_duplicate_an_existing_schedule(): void {
+        $filter_id = Disciple_Tools_CRM_Sync::create_filter( 'Reconcile Existing Test', 'hourly', [], '00:00', 'respond_io' );
+        $ts_before = wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] );
+
+        Disciple_Tools_CRM_Sync::reconcile_scheduled_polls();
+
+        $this->assertSame(
+            $ts_before,
+            wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ),
+            'An already-scheduled poll must be left untouched.'
+        );
+        $this->assertSame( 1, $this->count_scheduled_events( 'dt_crm_sync_poll', [ $filter_id ] ) );
+    }
+
+    public function test_reconcile_is_rate_limited_within_the_hour(): void {
+        $filter_id = Disciple_Tools_CRM_Sync::create_filter( 'Reconcile Rate Limit Test', 'hourly', [], '00:00', 'respond_io' );
+        wp_clear_scheduled_hook( 'dt_crm_sync_poll', [ $filter_id ] );
+
+        // A prior reconcile pass already ran this request cycle.
+        set_transient( 'dt_crm_sync_cron_reconcile_lock', time(), HOUR_IN_SECONDS );
+
+        Disciple_Tools_CRM_Sync::reconcile_scheduled_polls();
+
+        $this->assertFalse(
+            wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ),
+            'Reconciliation must not run again inside the rate-limit window.'
+        );
+    }
+
+// reschedule_email_digest
+
+    public function test_reschedule_email_digest_schedules_when_enabled(): void {
+        Disciple_Tools_CRM_Sync::reschedule_email_digest( [
+            'enabled'    => true,
+            'recipients' => [ 'admin@example.org' ],
+            'send_time'  => '23:59',
+        ] );
+
+        $ts = wp_next_scheduled( 'dt_crm_sync_email_digest' );
+        $this->assertNotFalse( $ts, 'Enabling the digest must schedule the cron event.' );
+
+        $tz = wp_timezone();
+        $dt = new DateTime( 'now', $tz );
+        $dt->setTimestamp( $ts );
+        $this->assertSame( '23', $dt->format( 'H' ) );
+        $this->assertSame( '59', $dt->format( 'i' ) );
+    }
+
+    public function test_reschedule_email_digest_clears_when_disabled(): void {
+        Disciple_Tools_CRM_Sync::reschedule_email_digest( [
+            'enabled'    => true,
+            'recipients' => [ 'admin@example.org' ],
+            'send_time'  => '06:00',
+        ] );
+        $this->assertNotFalse( wp_next_scheduled( 'dt_crm_sync_email_digest' ) );
+
+        Disciple_Tools_CRM_Sync::reschedule_email_digest( [ 'enabled' => false, 'recipients' => [], 'send_time' => '06:00' ] );
+
+        $this->assertFalse(
+            wp_next_scheduled( 'dt_crm_sync_email_digest' ),
+            'Disabling the digest must clear any pending cron event.'
+        );
+    }
+
+    public function test_reschedule_email_digest_does_not_double_schedule(): void {
+        Disciple_Tools_CRM_Sync::reschedule_email_digest( [
+            'enabled'    => true,
+            'recipients' => [ 'admin@example.org' ],
+            'send_time'  => '06:00',
+        ] );
+        $ts_before = wp_next_scheduled( 'dt_crm_sync_email_digest' );
+
+        Disciple_Tools_CRM_Sync::reschedule_email_digest( [
+            'enabled'    => true,
+            'recipients' => [ 'admin@example.org' ],
+            'send_time'  => '06:00',
+        ] );
+
+        $count = 0;
+        foreach ( _get_cron_array() ?? [] as $events ) {
+            if ( isset( $events['dt_crm_sync_email_digest'] ) ) {
+                $count += count( $events['dt_crm_sync_email_digest'] );
+            }
+        }
+        $this->assertSame( 1, $count, 'Re-saving the same settings must not create a second cron entry.' );
+        $this->assertSame( $ts_before, wp_next_scheduled( 'dt_crm_sync_email_digest' ) );
     }
 }

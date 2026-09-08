@@ -13,6 +13,7 @@ define( 'ABSPATH', '/' );
 define( 'WPINC', 'wp-includes' );
 define( 'HOUR_IN_SECONDS', 3600 );
 define( 'DAY_IN_SECONDS', 86400 );
+define( 'MINUTE_IN_SECONDS', 60 );
 
 // WP hook stubs (called at file-load time by some plugin files)
 // Brain Monkey overrides these per-test via Patchwork; stubs here keep the
@@ -181,6 +182,27 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) {
             }
 
             return $filter_id;
+        }
+
+        /**
+         * Stub implementation of reschedule_email_digest() matching the production class.
+         * Call count is tracked so tests can assert whether a save actually
+         * touched the cron table (it's not a WP function Brain Monkey can mock).
+         *
+         * @var array<int, array>
+         */
+        public static array $reschedule_email_digest_calls = [];
+
+        public static function reschedule_email_digest( array $settings ): void {
+            self::$reschedule_email_digest_calls[] = $settings;
+
+            wp_clear_scheduled_hook( 'dt_crm_sync_email_digest' );
+
+            if ( empty( $settings['enabled'] ) ) {
+                return;
+            }
+
+            wp_schedule_event( time(), 'daily', 'dt_crm_sync_email_digest' );
         }
 
         /**
@@ -437,6 +459,7 @@ require_once $_plugin_root . '/import/class-media-sideloader.php';
 require_once $_plugin_root . '/import/class-message-importer.php';
 require_once $_plugin_root . '/import/import-processor.php';
 require_once $_plugin_root . '/import/poll-handler.php';
+require_once $_plugin_root . '/import/class-email-digest.php';
 require_once $_plugin_root . '/rest-api/abstract-rest-controller.php';
 require_once $_plugin_root . '/rest-api/class-rest-config.php';
 require_once $_plugin_root . '/rest-api/class-rest-contacts.php';

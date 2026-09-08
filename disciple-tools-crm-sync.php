@@ -5,7 +5,7 @@
  * Author:            tjarrab
  * Author URI:        https://github.com/tjarrab
  * Description:       Imports and syncs contacts from CRM platforms into Disciple.Tools, with message history, webhook automation, and scheduled polling.
- * Version:           1.0.8
+ * Version:           1.0.9
  * Text Domain:       disciple-tools-crm-sync
  * Domain Path:       /languages
  * GitHub Plugin URI: https://github.com/tjarrab/disciple-tools-crm-sync
@@ -334,6 +334,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             require_once DT_CRM_SYNC_PATH . 'import/poll-handler.php';
             add_action( 'dt_crm_sync_poll', [ $this, 'run_poll_for_filter' ] );
 
+            // Recovery net for dropped recurring poll events -- see method docblock.
+            add_action( 'init', [ __CLASS__, 'reconcile_scheduled_polls' ] );
+
+            require_once DT_CRM_SYNC_PATH . 'import/class-email-digest.php';
+            add_action( 'dt_crm_sync_email_digest', [ 'Disciple_Tools_CRM_Sync_Email_Digest', 'send' ] );
+
     // REST-only hooks
 
             if ( $is_rest && strpos( dt_get_url_path(), 'disciple-tools-crm-sync' ) !== false ) {
@@ -604,8 +610,32 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
             $manifest[] = $filter_id;
             update_option( 'dt_crm_sync_saved_filters', $manifest );
 
-            // Calculate first-run timestamp.
-            // For daily polls, honour the requested time-of-day in the site timezone.
+            $first_run_ts = self::calculate_first_run_ts( $interval, $poll_time );
+
+            // Schedule the recurring poll using the unified hook with filter_id as the cron arg.
+            // Guard against double-scheduling for idempotency.
+            if ( ! wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
+                $scheduled = wp_schedule_event( $first_run_ts, $interval, 'dt_crm_sync_poll', [ $filter_id ] );
+                if ( false === $scheduled || is_wp_error( $scheduled ) ) {
+                    Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'failed', 'Could not schedule the recurring poll cron event. The filter was saved but will not run until this is resolved.' );
+                }
+            }
+
+            return $filter_id;
+        }
+
+        /**
+         * Resolve the timestamp a filter's recurring poll should first fire at.
+         *
+         * For 'daily' polls this honours the requested time-of-day in the site
+         * timezone, rolling over to tomorrow if that time has already passed today.
+         * Every other interval just starts from now.
+         *
+         * @param string $interval  'hourly' | 'every_2_hours' | 'every_4_hours' | 'every_8_hours' | 'daily'.
+         * @param string $poll_time For 'daily' only: HH:MM in site timezone.
+         * @return int Unix timestamp.
+         */
+        private static function calculate_first_run_ts( string $interval, string $poll_time ): int {
             if ( 'daily' === $interval && preg_match( '/^(0\d|1\d|2[0-3]):[0-5]\d$/', $poll_time ) ) {
                 [ $h, $m ] = array_map( 'intval', explode( ':', $poll_time ) );
                 $tz_obj    = wp_timezone();
@@ -614,18 +644,84 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
                 if ( $first_run <= $now ) {
                     $first_run->modify( '+1 day' );
                 }
-                $first_run_ts = $first_run->getTimestamp();
-            } else {
-                $first_run_ts = time();
+                return $first_run->getTimestamp();
+            }
+            return time();
+        }
+
+        /**
+         * Re-schedule any saved filter's recurring poll that has gone missing from
+         * the cron table.
+         *
+         * WordPress does not retry a failed cron reschedule on its own, so a single
+         * dropped write (from load, an object cache glitch, etc.) permanently stops
+         * that filter's imports with nothing to bring it back. This check runs on
+         * every request (see the 'init' hook below), rate-limited by a transient,
+         * so recovery does not itself depend on WP-Cron being healthy.
+         *
+         * @return void
+         */
+        public static function reconcile_scheduled_polls(): void {
+            $manifest = get_option( 'dt_crm_sync_saved_filters', [] );
+            $manifest = is_array( $manifest ) ? $manifest : [];
+            if ( empty( $manifest ) ) {
+                return;
             }
 
-            // Schedule the recurring poll using the unified hook with filter_id as the cron arg.
-            // Guard against double-scheduling for idempotency.
-            if ( ! wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
-                wp_schedule_event( $first_run_ts, $interval, 'dt_crm_sync_poll', [ $filter_id ] );
+            $lock_key = 'dt_crm_sync_cron_reconcile_lock';
+            if ( false !== get_transient( $lock_key ) ) {
+                return;
+            }
+            set_transient( $lock_key, time(), HOUR_IN_SECONDS );
+
+            foreach ( $manifest as $filter_id ) {
+                $filter_id = sanitize_key( $filter_id );
+                if ( '' === $filter_id || wp_next_scheduled( 'dt_crm_sync_poll', [ $filter_id ] ) ) {
+                    continue;
+                }
+
+                $raw = get_option( 'dt_crm_sync_saved_filter_' . $filter_id );
+                if ( false === $raw || '' === $raw ) {
+                    continue; // Deleted-but-not-cleaned-up filters are handled by the poll handler itself.
+                }
+
+                $envelope = json_decode( $raw, true );
+                if ( json_last_error() !== JSON_ERROR_NONE || ! is_array( $envelope ) ) {
+                    continue;
+                }
+
+                $interval  = sanitize_key( $envelope['interval'] ?? 'daily' );
+                $poll_time = sanitize_text_field( $envelope['poll_time'] ?? '00:00' );
+
+                $scheduled = wp_schedule_event( self::calculate_first_run_ts( $interval, $poll_time ), $interval, 'dt_crm_sync_poll', [ $filter_id ] );
+                $status    = ( false === $scheduled || is_wp_error( $scheduled ) ) ? 'failed' : 'success';
+                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, $status, 'Recurring poll cron event was missing and a reschedule was attempted.' );
+            }
+        }
+
+        /**
+         * Apply the current email notifier settings to the 'dt_crm_sync_email_digest'
+         * cron event -- clears any existing schedule, then re-schedules at the
+         * configured time if the digest is enabled.
+         *
+         * Called right after the settings are saved on the Configuration tab so the
+         * cron always reflects what an admin just clicked "Save" on, without waiting
+         * for the next request.
+         *
+         * @param array $settings { enabled: bool, recipients: string[], send_time: string }
+         */
+        public static function reschedule_email_digest( array $settings ): void {
+            wp_clear_scheduled_hook( 'dt_crm_sync_email_digest' );
+
+            if ( empty( $settings['enabled'] ) ) {
+                return;
             }
 
-            return $filter_id;
+            $send_time = sanitize_text_field( $settings['send_time'] ?? '06:00' );
+            $scheduled = wp_schedule_event( self::calculate_first_run_ts( 'daily', $send_time ), 'daily', 'dt_crm_sync_email_digest' );
+            if ( false === $scheduled || is_wp_error( $scheduled ) ) {
+                Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', 'email_digest', null, 'failed', 'Could not schedule the daily email digest cron event.' );
+            }
         }
 
     // Encryption helpers
@@ -750,6 +846,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync' ) ) :
          */
         public static function deactivation(): void {
             wp_clear_scheduled_hook( 'dt_crm_sync_process_batch' );
+            wp_clear_scheduled_hook( 'dt_crm_sync_email_digest' );
 
             // Clear all instances of the unified poll hook (one per saved filter_id arg).
             $manifest = get_option( 'dt_crm_sync_saved_filters', [] );
