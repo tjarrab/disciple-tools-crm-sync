@@ -130,6 +130,23 @@ if ( ! function_exists( 'set_transient' ) ) {
 if ( ! function_exists( 'delete_transient' ) ) {
     function delete_transient( $transient ): bool { return true; } // phpcs:ignore
 }
+if ( ! function_exists( 'add_option' ) ) {
+    function add_option( $option, $value = '', $deprecated = '', $autoload = 'yes' ): bool { return true; } // phpcs:ignore
+}
+if ( ! function_exists( 'delete_option' ) ) {
+    function delete_option( $option ) { return true; } // phpcs:ignore
+}
+if ( ! function_exists( 'maybe_unserialize' ) ) {
+    function maybe_unserialize( $data ) { // phpcs:ignore
+        if ( is_string( $data ) ) {
+            $unserialized = @unserialize( $data ); // phpcs:ignore WordPress.PHP.NoSilencedErrors, WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+            if ( false !== $unserialized || 'b:0;' === $data ) {
+                return $unserialized;
+            }
+        }
+        return $data;
+    }
+}
 if ( ! function_exists( 'sanitize_file_name' ) ) {
     function sanitize_file_name( $filename ): string { return basename( (string) $filename ); } // phpcs:ignore
 }

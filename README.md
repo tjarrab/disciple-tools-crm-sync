@@ -232,6 +232,14 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.10
+
+- Fixed contact sync creating duplicate records under concurrent imports and merged-contact edge cases
+
+### 1.0.9
+
+- Fixed the sync losing the schedule in Cron sometimes, added an email notice for imports
+
 ### 1.0.8
 
 - Fixing a couple schema mapping bugs in respond.io 

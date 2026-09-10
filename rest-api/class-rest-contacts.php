@@ -104,7 +104,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_REST_Contacts' ) ) {
                 );
             }
 
-            $ids = array_values( array_filter( array_map( 'absint', $raw_ids ) ) );
+            $ids = array_values( array_unique( array_filter( array_map( 'absint', $raw_ids ) ) ) );
 
             if ( empty( $ids ) ) {
                 return new WP_REST_Response(

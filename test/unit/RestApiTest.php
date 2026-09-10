@@ -320,4 +320,32 @@ class RestApiTest extends BrainMonkeyTestCase {
         $this->assertSame( 'Hello, how are you?', $data['translation'] ?? '' );
         $this->assertSame( 200, $data['http_status'] ?? 0 );
     }
+
+// handle_import — ID dedup
+
+    /**
+     * A duplicate ID submitted in one request must not be split across two
+     * scheduled batches — that would let a race between the two batches recreate
+     * the same duplicate-contact bug the per-contact lock exists to prevent.
+     */
+    public function test_handle_import_deduplicates_ids_before_scheduling(): void {
+        $scheduled_ids = [];
+        Functions\when( 'wp_schedule_single_event' )->alias(
+            function ( $timestamp, $hook, $args ) use ( &$scheduled_ids ) {
+                if ( 'dt_crm_sync_process_batch' === $hook ) {
+                    $scheduled_ids = array_merge( $scheduled_ids, $args[0]['ids'] );
+                }
+                return true;
+            }
+        );
+
+        $contacts = new Disciple_Tools_CRM_Sync_REST_Contacts();
+        $response = $contacts->handle_import( new WP_REST_Request( 'POST', '/import', [
+            'ids' => [ 5, 5, 6 ],
+        ] ) );
+
+        $this->assertSame( 200, $response->get_status() );
+        sort( $scheduled_ids );
+        $this->assertSame( [ 5, 6 ], $scheduled_ids, 'A duplicate ID in the request must be scheduled only once.' );
+    }
 }

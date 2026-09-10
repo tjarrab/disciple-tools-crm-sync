@@ -158,6 +158,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
                 // !empty() would wrongly treat '0' as falsy and stop pagination a page early.
                 } while ( null !== $cursor );
 
+                // Cursor pagination can return the same contact twice if the underlying
+                // dataset changes mid-poll, which would otherwise schedule it into two
+                // separate batches and risk a duplicate import.
+                $deduped_count = count( $all_ids );
+                $all_ids       = array_values( array_unique( $all_ids, SORT_STRING ) );
+                $duplicate_ids = $deduped_count - count( $all_ids );
+
                 if ( empty( $all_ids ) ) {
                     Disciple_Tools_CRM_Sync_Logger::write( 'scheduled', $filter_id, null, 'skipped', '0 contacts found.' );
                     return;
@@ -194,7 +201,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
                         $filter_id,
                         null,
                         'failed',
-                        count( $all_ids ) . ' contacts found but no batches could be scheduled — all ' . $batch_count . ' batch(es) failed to queue.'
+                        count( $all_ids ) . ' contacts found (' . $duplicate_ids . ' duplicate(s) removed) but no batches could be scheduled — all ' . $batch_count . ' batch(es) failed to queue.'
                     );
                 } elseif ( $failed_chunks > 0 ) {
                     Disciple_Tools_CRM_Sync_Logger::write(
@@ -202,7 +209,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
                         $filter_id,
                         null,
                         'failed',
-                        count( $all_ids ) . ' contacts found, ' . $queued_count . ' of ' . $batch_count . ' batch(es) scheduled — ' . $failed_chunks . ' batch(es) failed to queue.'
+                        count( $all_ids ) . ' contacts found (' . $duplicate_ids . ' duplicate(s) removed), ' . $queued_count . ' of ' . $batch_count . ' batch(es) scheduled — ' . $failed_chunks . ' batch(es) failed to queue.'
                     );
                 } else {
                     Disciple_Tools_CRM_Sync_Logger::write(
@@ -210,7 +217,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Poll_Handler' ) ) {
                         $filter_id,
                         null,
                         'success',
-                        count( $all_ids ) . ' contacts found, ' . $batch_count . ' batch(es) scheduled.'
+                        count( $all_ids ) . ' contacts found (' . $duplicate_ids . ' duplicate(s) removed), ' . $batch_count . ' batch(es) scheduled.'
                     );
                 }
             } finally {

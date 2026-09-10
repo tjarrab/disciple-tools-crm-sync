@@ -121,6 +121,65 @@ class PollHandlerTest extends BrainMonkeyTestCase {
         $this->assertSame( 1, $batch_count );
     }
 
+// Duplicate ID dedup
+
+    /**
+     * A contact returned on more than one page (dataset drift mid-poll) must only
+     * be scheduled once — otherwise it can land in two batches and race to create
+     * a duplicate DT contact.
+     */
+    public function test_contact_id_repeated_across_pages_is_scheduled_only_once(): void {
+        $this->mock_get_option_for_filter( [ 'search' => '' ] );
+
+        Functions\when( 'apply_filters' )->alias(
+            fn( $hook, $value ) => 'dt_crm_sync_connectors' === $hook
+                ? [ 'respond_io' => 'Disciple_Tools_CRM_Sync_Connector_Respond_IO' ]
+                : $value
+        );
+        Functions\when( 'wp_timezone_string' )->justReturn( 'UTC' );
+        Functions\when( 'add_query_arg' )->justReturn( 'https://api.test/mocked' );
+        Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+
+        // Page 1: ids 1, 2, 3 with a next cursor. Page 2: id 3 again (drift) plus 4.
+        $page_bodies = [
+            json_encode( [
+                'items'      => [ [ 'id' => 1 ], [ 'id' => 2 ], [ 'id' => 3 ] ],
+                'pagination' => [ 'next' => 'https://api.test/contact/list?cursorId=999' ],
+            ] ),
+            json_encode( [
+                'items'      => [ [ 'id' => 3 ], [ 'id' => 4 ] ],
+                'pagination' => [],
+            ] ),
+        ];
+        $call = 0;
+        Functions\when( 'wp_remote_retrieve_body' )->alias(
+            function () use ( &$call, $page_bodies ) {
+                return $page_bodies[ $call++ ] ?? json_encode( [ 'items' => [], 'pagination' => [] ] );
+            }
+        );
+
+        $scheduled_ids = [];
+        Functions\when( 'wp_schedule_single_event' )->alias(
+            function ( int $timestamp, string $hook, array $args ) use ( &$scheduled_ids ) {
+                if ( 'dt_crm_sync_process_batch' === $hook ) {
+                    $scheduled_ids = array_merge( $scheduled_ids, $args[0]['ids'] );
+                }
+                return true;
+            }
+        );
+
+        ( new Disciple_Tools_CRM_Sync_Poll_Handler() )->run_poll( self::FILTER_ID );
+
+        sort( $scheduled_ids );
+        $this->assertSame(
+            [ 1, 2, 3, 4 ],
+            $scheduled_ids,
+            'The id repeated by page drift (3) must be scheduled only once.'
+        );
+    }
+
 // Staggered scheduling
 
     public function test_batch_event_timestamps_are_staggered_by_3_seconds(): void {

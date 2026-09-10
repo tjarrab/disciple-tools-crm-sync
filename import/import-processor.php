@@ -46,6 +46,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
         protected ?Disciple_Tools_CRM_Sync_Activity_Feed_Writer $activity_feed_writer = null;
 
         /**
+         * Lock names acquired for the contact currently being processed (the pre-merge
+         * connector ID, plus a canonical-ID and/or phone lock if those identities come
+         * into play) — process_single_contact() releases every entry here, not just one.
+         */
+        private array $held_contact_locks = [];
+
+        /**
          * Returns the singleton instance, creating it on first call.
          *
          * @return self
@@ -206,15 +213,116 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
          * Process a single contact: match or create the DT post, map fields,
          * and import message history.
          *
+         * Wraps do_process_single_contact() with a per-contact mutex so that two
+         * overlapping batches (e.g. a slow batch still running when WP-Cron's
+         * doing_cron lock expires and starts another) can't both decide the
+         * contact doesn't exist yet and both create a duplicate DT post. Only the
+         * pre-merge connector-ID lock is acquired here — do_process_single_contact()
+         * acquires additional locks (canonical ID, phone) as those identities are
+         * discovered, and every lock taken is released below regardless of which
+         * ones ended up in play.
+         *
+         * @param string $respond_id    The Respond.io contact ID.
+         * @param string $trigger_type  'scheduled', 'manual', or 'webhook'.
+         * @param bool   $skip_existing When true, contacts already fully imported are skipped.
+         * @return WP_Error|bool
+         */
+        protected function process_single_contact(
+            string $respond_id,
+            string $trigger_type,
+            bool $skip_existing = true
+        ): WP_Error|bool {
+            $this->held_contact_locks = [];
+
+            if ( ! $this->try_acquire_lock( $this->contact_lock_key( $respond_id ) ) ) {
+                Disciple_Tools_CRM_Sync_Logger::write(
+                    $trigger_type, $respond_id, null, 'skipped', 'locked by concurrent import'
+                );
+                return true;
+            }
+
+            try {
+                return $this->do_process_single_contact( $respond_id, $trigger_type, $skip_existing );
+            } finally {
+                foreach ( $this->held_contact_locks as $held_lock ) {
+                    $this->release_contact_lock( $held_lock );
+                }
+                $this->held_contact_locks = [];
+            }
+        }
+
+        /**
+         * Namespaces a lock suffix (a connector ID or a "phone_{digits}" key) under
+         * the active connector's meta key prefix so different identity kinds — and
+         * different connectors — never collide on the same option name.
+         */
+        private function contact_lock_key( string $suffix ): string {
+            return $this->connector->get_meta_key_prefix() . $suffix;
+        }
+
+        /**
+         * Acquires a lock and, on success, tracks it so process_single_contact()'s
+         * finally block releases every lock taken for this contact — a single import
+         * can end up holding one for the pre-merge ID, one for the canonical ID, and
+         * one for the phone number, all at once.
+         *
+         * @return bool True if the lock was acquired.
+         */
+        private function try_acquire_lock( string $lock_name ): bool {
+            if ( ! $this->acquire_contact_lock( $lock_name ) ) {
+                return false;
+            }
+            $this->held_contact_locks[] = $lock_name;
+            return true;
+        }
+
+        /**
+         * Acquires a mutex for a connector ID using an atomic add_option() —
+         * unlike get_transient()/set_transient(), the option table's unique key
+         * makes the "does it exist yet" check and the write a single DB operation,
+         * closing the race window a transient-based lock would still have.
+         *
+         * @return bool True if the lock was acquired.
+         */
+        private function acquire_contact_lock( string $lock_name ): bool {
+            $option_name = 'dt_crm_sync_contact_lock_' . $lock_name;
+
+            if ( add_option( $option_name, time(), '', 'no' ) ) {
+                return true;
+            }
+
+            // Lock is held — if it's older than a batch's max runtime, the process
+            // that took it almost certainly crashed without releasing it. Reclaim it.
+            $held_since = (int) get_option( $option_name );
+            if ( $held_since > 0 && ( time() - $held_since ) > 300 ) {
+                delete_option( $option_name );
+                return add_option( $option_name, time(), '', 'no' );
+            }
+
+            return false;
+        }
+
+        /**
+         * Releases a lock acquired by acquire_contact_lock().
+         */
+        private function release_contact_lock( string $lock_name ): void {
+            delete_option( 'dt_crm_sync_contact_lock_' . $lock_name );
+        }
+
+        /**
+         * Match or create the DT post, map fields, and import message history
+         * for a single contact. See process_single_contact() for the public entry
+         * point — this method assumes the caller already holds the contact lock.
+         *
          * Returns true on success or intentional skip, WP_Error on failure or
          * 429/449 (caller reschedules the remaining batch).
          *
          * @param string $respond_id    The Respond.io contact ID.
          * @param string $trigger_type  'scheduled', 'manual', or 'webhook'.
-         * @param bool   $skip_existing When true, contacts already in DT are skipped.
+         * @param bool   $skip_existing When true, contacts already fully imported are skipped.
          * @return WP_Error|bool
          */
-        protected function process_single_contact(
+        private function do_process_single_contact(
             string $respond_id,
             string $trigger_type,
             bool $skip_existing = true
@@ -226,8 +334,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
 
                 // Skip existing contacts before making any API calls so that large
                 // scheduled runs don't waste API quota re-importing contacts that
-                // are already up to date.
-                if ( $skip_existing && 'update' === $action ) {
+                // are already up to date. A contact whose history import never
+                // finished (e.g. a prior run was cut off mid-batch) is not skipped,
+                // so it gets a chance to complete instead of being stuck forever.
+                $history_synced = $dt_post_id
+                    && get_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'history_synced', true );
+                if ( $skip_existing && 'update' === $action && $history_synced ) {
                     Disciple_Tools_CRM_Sync_Logger::write(
                         $trigger_type, $respond_id, $dt_post_id, 'skipped', 'skip_existing'
                     );
@@ -248,10 +360,42 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 }
 
                 $phone = sanitize_text_field( $profile['phone'] ?? '' );
+                $email = sanitize_email( $profile['email'] ?? '' );
+
+                // A phone number is a shared identity across Respond.io IDs — two
+                // different (never-merged) contacts with the same number must be
+                // serialized too, or the phone/email fallback below can be defeated
+                // by the same race the connector-ID lock above already closes.
+                //
+                // Uses the matcher's own trailing-digit-suffix key (not the full
+                // digit string) so two differently-formatted representations of the
+                // same number — e.g. with vs. without a country code — contend for
+                // the same lock instead of sailing past each other on different keys.
+                $phone_lock_suffix = Disciple_Tools_CRM_Sync_Contact_Matcher::phone_lock_key( $phone );
+                if ( '' !== $phone_lock_suffix ) {
+                    if ( ! $this->try_acquire_lock( $this->contact_lock_key( 'phone_' . $phone_lock_suffix ) ) ) {
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $respond_id, $dt_post_id, 'skipped', 'locked by concurrent import (phone)'
+                        );
+                        return true;
+                    }
+                }
+
+                // Same reasoning as the phone lock above, for the email fallback.
+                // Lowercased because the DB's LIKE comparison in find_by_phone_or_email()
+                // relies on WordPress's default case-insensitive table collation — the
+                // lock must be at least as broad as that comparison or it can miss.
+                if ( '' !== $email ) {
+                    if ( ! $this->try_acquire_lock( $this->contact_lock_key( 'email_' . strtolower( $email ) ) ) ) {
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $respond_id, $dt_post_id, 'skipped', 'locked by concurrent import (email)'
+                        );
+                        return true;
+                    }
+                }
 
                 // Fall back to phone/email lookup if meta hasn't been written yet.
                 if ( ! $dt_post_id ) {
-                    $email      = sanitize_email( $profile['email'] ?? '' );
                     $dt_post_id = $this->matcher->find_by_phone_or_email( $phone, $email );
                     $action     = $dt_post_id ? 'update' : 'create';
                 }
@@ -259,7 +403,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 // Handle merged contacts: if the returned profile ID differs from
                 // what we requested, the original contact was absorbed by another.
                 if ( ! empty( $profile['id'] ) && (string) $profile['id'] !== (string) $respond_id ) {
-                    $canonical_id         = (string) $profile['id'];
+                    $canonical_id = (string) $profile['id'];
+
+                    // The create/update decision below is made against the canonical
+                    // ID, not the one we were locked on when this method started — so
+                    // a second contact that merges into the same canonical ID needs to
+                    // be blocked here too, before either one reads or writes against it.
+                    if ( ! $this->try_acquire_lock( $this->contact_lock_key( $canonical_id ) ) ) {
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $canonical_id, $dt_post_id, 'skipped', 'locked by concurrent import (merge)'
+                        );
+                        return true;
+                    }
+
                     $canonical_dt_post_id = $this->matcher->find_by_connector_id( $canonical_id );
                     $meta_key             = $this->connector->get_meta_key_prefix() . 'id';
 
@@ -273,6 +429,17 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                         Disciple_Tools_CRM_Sync_Logger::write(
                             $trigger_type, $canonical_id, $canonical_dt_post_id, 'merged',
                             sprintf( 'absorbed: %s (post %d unreferenced)', $respond_id, $old_dt_post_id )
+                        );
+                    } elseif ( $canonical_dt_post_id && ! $dt_post_id ) {
+                        // The canonical post already exists but this ID has no phone/email of
+                        // its own to have matched it above (e.g. a bare social-media channel) —
+                        // adopt the canonical post instead of falling through to create a
+                        // redundant one.
+                        $dt_post_id = $canonical_dt_post_id;
+                        $action     = 'update';
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $canonical_id, $canonical_dt_post_id, 'merged',
+                            sprintf( 'absorbed: %s (matched via canonical ID only)', $respond_id )
                         );
                     } elseif ( $dt_post_id ) {
                         // Old post exists, canonical doesn't yet. Repoint the meta to the new ID.
@@ -372,6 +539,8 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                     // Propagate 429 / 449 for batch rescheduling.
                     return $msg_error;
                 }
+
+                update_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'history_synced', '1' );
 
                 Disciple_Tools_CRM_Sync_Logger::write(
                     $trigger_type, $respond_id, $dt_post_id, 'success', $action

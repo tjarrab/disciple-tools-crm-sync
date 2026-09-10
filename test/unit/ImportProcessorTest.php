@@ -415,6 +415,330 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
         $this->assertSame( 'dt_write_failed', $result->get_error_code() );
     }
 
+// Per-contact locking (concurrent batch protection)
+
+    /**
+     * Two batches racing to import the same contact must not both create a DT
+     * post — the loser of the lock is skipped, not treated as a failure.
+     */
+    public function test_process_single_contact_skips_when_locked_by_concurrent_import(): void {
+        Functions\when( 'add_option' )->justReturn( false );
+        Functions\when( 'get_option' )->alias(
+            fn( $key, $default = false ) => str_starts_with( (string) $key, 'dt_crm_sync_contact_lock_' ) ? time() : $default
+        );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'manual' );
+
+        $this->assertTrue( $result );
+
+        global $wpdb;
+        $skipped = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'skipped' === ( $c['data']['status'] ?? '' ) && str_contains( $c['data']['message'] ?? '', 'locked' )
+        );
+        $this->assertNotEmpty( $skipped, 'A skipped log entry must be written when the contact lock is held by a concurrent run.' );
+    }
+
+    /**
+     * A lock left behind by a crashed process must not block imports forever —
+     * once it's older than the batch execution ceiling it gets reclaimed.
+     */
+    public function test_process_single_contact_reclaims_a_stale_lock_and_proceeds(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 429 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{}' );
+        Functions\when( 'wp_remote_retrieve_header' )->justReturn( '60' );
+
+        $add_option_calls = 0;
+        Functions\when( 'add_option' )->alias( function () use ( &$add_option_calls ) {
+            ++$add_option_calls;
+            return $add_option_calls > 1;
+        } );
+        Functions\when( 'get_option' )->alias(
+            fn( $key, $default = false ) => str_starts_with( (string) $key, 'dt_crm_sync_contact_lock_' ) ? time() - 400 : $default
+        );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'manual' );
+
+        $this->assertInstanceOf( WP_Error::class, $result );
+        $this->assertSame( 'rate_limited', $result->get_error_code(), 'A stale lock must be reclaimed so processing still proceeds.' );
+        $this->assertSame( 2, $add_option_calls, 'The stale lock must be reclaimed with exactly one retry.' );
+    }
+
+    /**
+     * Two different Respond.io contacts that share a phone number and are
+     * processed concurrently must not both create a DT post — the phone lock
+     * catches what the connector-ID lock alone would miss.
+     */
+    public function test_process_single_contact_skips_when_phone_lock_is_held(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","phone":"+15555550100","email":"t@example.com"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        // The 1st add_option() call is the pre-merge-ID lock (must succeed so the
+        // flow reaches phone extraction); the 2nd is the phone lock — simulate it
+        // already being held by a concurrent run on a different Respond.io ID.
+        $call = 0;
+        Functions\when( 'add_option' )->alias( function () use ( &$call ) {
+            ++$call;
+            return 1 === $call;
+        } );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'scheduled' );
+
+        $this->assertTrue( $result );
+
+        global $wpdb;
+        $skipped = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'skipped' === ( $c['data']['status'] ?? '' ) && str_contains( $c['data']['message'] ?? '', 'phone' )
+        );
+        $this->assertNotEmpty( $skipped, 'A phone lock contention must be logged and the contact skipped.' );
+        $this->assertEmpty( DT_Posts::$create_post_calls, 'No DT post should be created while the phone lock is held elsewhere.' );
+    }
+
+    /**
+     * Two different Respond.io contacts that share an email address (no shared
+     * phone, no merge) and are processed concurrently must not both create a DT
+     * post — find_by_phone_or_email() falls back to email, so email needs the
+     * same protection the phone lock already gets.
+     */
+    public function test_process_single_contact_skips_when_email_lock_is_held(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","email":"shared@example.com"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        // The 1st add_option() call is the pre-merge-ID lock (must succeed so the
+        // flow reaches email extraction; no phone in this profile, so the email
+        // lock is the 2nd call) — simulate it already held by a concurrent run.
+        $call = 0;
+        Functions\when( 'add_option' )->alias( function () use ( &$call ) {
+            ++$call;
+            return 1 === $call;
+        } );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'scheduled' );
+
+        $this->assertTrue( $result );
+
+        global $wpdb;
+        $skipped = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'skipped' === ( $c['data']['status'] ?? '' ) && str_contains( $c['data']['message'] ?? '', 'email' )
+        );
+        $this->assertNotEmpty( $skipped, 'An email lock contention must be logged and the contact skipped.' );
+        $this->assertEmpty( DT_Posts::$create_post_calls, 'No DT post should be created while the email lock is held elsewhere.' );
+    }
+
+    /**
+     * The email lock key must be case-insensitive, matching the case-insensitive
+     * LIKE comparison find_by_phone_or_email() relies on for its email match.
+     */
+    public function test_process_single_contact_email_lock_key_is_case_insensitive(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+        Functions\when( 'add_post_meta' )->justReturn( true );
+        Functions\when( 'update_post_meta' )->justReturn( true );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $captured_option_names = [];
+        Functions\when( 'add_option' )->alias( function ( $option ) use ( &$captured_option_names ) {
+            $captured_option_names[] = $option;
+            return true;
+        } );
+
+        // Position [0] is the pre-merge-ID lock, [1] is the email lock (no phone present).
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","email":"Shared@Example.com"}' );
+        $this->processor->expose_process_single_contact( '42', 'scheduled' );
+        $mixed_case_lock = $captured_option_names[1] ?? null;
+
+        $captured_option_names = [];
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","email":"shared@example.com"}' );
+        $this->processor->expose_process_single_contact( '43', 'scheduled' );
+        $lower_case_lock = $captured_option_names[1] ?? null;
+
+        $this->assertNotNull( $mixed_case_lock, 'An email lock must be acquired when an email is present.' );
+        $this->assertSame(
+            $mixed_case_lock,
+            $lower_case_lock,
+            'A mixed-case email and its lowercase form must resolve to the same email lock.'
+        );
+    }
+
+    /**
+     * Two racing contacts whose phone numbers differ only by a country code (one
+     * carries it, the other doesn't) must contend for the *same* lock, or the
+     * country-code variant would sail past the lock entirely and duplicate.
+     */
+    public function test_process_single_contact_phone_lock_key_is_consistent_across_formats(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+        Functions\when( 'add_post_meta' )->justReturn( true );
+        Functions\when( 'update_post_meta' )->justReturn( true );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $captured_option_names = [];
+        Functions\when( 'add_option' )->alias( function ( $option ) use ( &$captured_option_names ) {
+            $captured_option_names[] = $option;
+            return true;
+        } );
+
+        // Position [0] is the pre-merge-ID lock, [1] is the phone lock.
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","phone":"+1 (555) 555-0100","email":"t@example.com"}' );
+        $this->processor->expose_process_single_contact( '42', 'scheduled' );
+        $formatted_phone_lock = $captured_option_names[1] ?? null;
+
+        $captured_option_names = [];
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","phone":"5555550100","email":"t@example.com"}' );
+        $this->processor->expose_process_single_contact( '43', 'scheduled' );
+        $bare_phone_lock = $captured_option_names[1] ?? null;
+
+        $this->assertNotNull( $formatted_phone_lock, 'A phone lock must be acquired when a phone number is present.' );
+        $this->assertSame(
+            $formatted_phone_lock,
+            $bare_phone_lock,
+            'A country-code-formatted number and its bare form must resolve to the same phone lock.'
+        );
+    }
+
+    /**
+     * Two pre-merge Respond.io IDs that both canonicalize to the same contact
+     * (a Respond.io-side merge) must not both create a DT post under that
+     * canonical ID — the connector-ID lock alone doesn't cover this, since each
+     * one is locked on its own pre-merge ID, not the shared canonical one.
+     */
+    public function test_process_single_contact_skips_when_canonical_merge_lock_is_held(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        // No phone/email in the profile so the only locks in play are the
+        // pre-merge-ID lock and the canonical-ID lock this test is targeting.
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"id":"canonical_id","firstName":"Test"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+
+        // The 1st add_option() call is the pre-merge-ID lock (must succeed); the
+        // 2nd is the canonical-ID lock — simulate it already being held by a
+        // concurrent run processing a different pre-merge ID that merged the same way.
+        $call = 0;
+        Functions\when( 'add_option' )->alias( function () use ( &$call ) {
+            ++$call;
+            return 1 === $call;
+        } );
+
+        $result = $this->processor->expose_process_single_contact( 'stale_id', 'scheduled' );
+
+        $this->assertTrue( $result );
+
+        global $wpdb;
+        $skipped = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'skipped' === ( $c['data']['status'] ?? '' ) && str_contains( $c['data']['message'] ?? '', 'merge' )
+        );
+        $this->assertNotEmpty( $skipped, 'A canonical-ID lock contention must be logged and the contact skipped.' );
+        $this->assertEmpty( DT_Posts::$create_post_calls, 'No DT post should be created while the canonical lock is held elsewhere.' );
+    }
+
+// skip_existing vs. incomplete history import
+
+    /**
+     * A contact that already exists AND finished importing its message history
+     * is skipped, as before.
+     */
+    public function test_process_single_contact_skips_when_history_already_synced(): void {
+        Functions\when( 'get_posts' )->justReturn( [ 10 ] );
+        Functions\when( 'get_post_meta' )->justReturn( '1' );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'manual' );
+
+        $this->assertTrue( $result );
+
+        global $wpdb;
+        $skipped = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'skipped' === ( $c['data']['status'] ?? '' ) && 'skip_existing' === ( $c['data']['message'] ?? '' )
+        );
+        $this->assertNotEmpty( $skipped, 'Existing contact with a completed history sync must be skipped.' );
+    }
+
+    /**
+     * A contact that exists but never finished importing message history (e.g. a
+     * prior run was cut off mid-batch) must not be skipped — it needs a chance to
+     * complete instead of being stuck without a conversation log forever.
+     */
+    public function test_process_single_contact_does_not_skip_when_history_not_yet_synced(): void {
+        Functions\when( 'get_posts' )->justReturn( [ 10 ] );
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 429 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{}' );
+        Functions\when( 'wp_remote_retrieve_header' )->justReturn( '60' );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'manual' );
+
+        $this->assertInstanceOf(
+            WP_Error::class,
+            $result,
+            'A contact whose history import never completed must not be skipped by skip_existing.'
+        );
+        $this->assertSame( 'rate_limited', $result->get_error_code() );
+    }
+
+    /**
+     * After a message import succeeds, the history_synced flag must be written
+     * so future polls know this contact is safe to skip.
+     */
+    public function test_process_single_contact_marks_history_synced_after_successful_message_import(): void {
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Test","email":"t@example.com"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+        Functions\when( 'add_post_meta' )->justReturn( true );
+
+        $updated_meta = [];
+        Functions\when( 'update_post_meta' )->alias( function ( $post_id, $key, $value ) use ( &$updated_meta ) {
+            $updated_meta[] = [ 'post_id' => $post_id, 'key' => $key, 'value' => $value ];
+            return true;
+        } );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'manual' );
+
+        $this->assertTrue( $result );
+
+        $history_meta = array_values( array_filter( $updated_meta, fn( $m ) => str_contains( $m['key'], 'history_synced' ) ) );
+        $this->assertNotEmpty( $history_meta, 'history_synced meta must be written after a successful message import.' );
+        $this->assertSame( '1', $history_meta[0]['value'] );
+    }
+
 // Merged contact handling
 
     /**
@@ -516,6 +840,48 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
         $this->assertNotEmpty( $merged_rows, 'A merged log entry must be written even when no canonical post existed.' );
         $merged = array_values( $merged_rows )[0]['data'];
         $this->assertStringContainsString( 'stale_id', $merged['message'], 'Merge log must reference the absorbed (stale) contact ID.' );
+    }
+
+    /**
+     * When a merge is detected but this pre-merge ID has no phone/email of its
+     * own to match an existing post (e.g. a bare social-media channel), and the
+     * canonical post already exists from some other channel, the existing post
+     * must be adopted — not left to fall through into creating a duplicate.
+     */
+    public function test_process_contact_merge_adopts_existing_canonical_post_when_id_has_no_other_match(): void {
+        // 1st get_posts call: pre-merge-ID lookup -> not found. 2nd: canonical-ID lookup -> found (77).
+        $get_posts_call = 0;
+        Functions\when( 'get_posts' )->alias( function () use ( &$get_posts_call ) {
+            $get_posts_call++;
+            return 1 === $get_posts_call ? [] : [ 77 ];
+        } );
+
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        // No phone/email in the profile — nothing for the fallback lookup to match.
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"id":"canonical_id","firstName":"Test"}' );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'get_post_meta' )->justReturn( 'canonical_id' );
+        Functions\when( 'update_post_meta' )->justReturn( true );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $this->processor->expose_process_single_contact( 'channel_only_id', 'scheduled', false );
+
+        $this->assertEmpty( DT_Posts::$create_post_calls, 'The existing canonical post must be updated, not duplicated.' );
+        $this->assertNotEmpty( DT_Posts::$update_post_calls, 'The existing canonical post must be updated.' );
+        $this->assertSame( 77, end( DT_Posts::$update_post_calls )['id'] ?? null );
+
+        global $wpdb;
+        $merged_rows = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => ( $c['data']['status'] ?? '' ) === 'merged' && str_contains( $c['data']['message'] ?? '', 'canonical ID only' )
+        );
+        $this->assertNotEmpty( $merged_rows, 'A merged log entry describing the canonical-only match must be written.' );
     }
 
 // Translation service wiring
