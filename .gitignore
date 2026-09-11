@@ -21,3 +21,4 @@ phpunit-unit-out.txt
 # OS artifacts
 .DS_Store
 Thumbs.db
+documentation/DTSourceCode

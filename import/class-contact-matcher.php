@@ -4,7 +4,7 @@
  *
  * Provides two lookup strategies:
  *   1. Fast indexed path: match on the connector's ID meta key.
- *   2. Slow fallback: LIKE-pattern search against serialized phone/email meta.
+ *   2. Slow fallback: LIKE-pattern search against DT's per-channel phone/email meta.
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
@@ -60,13 +60,12 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
         /**
          * Sequential phone → email fallback duplicate check.
          *
-         * DT stores communication channel values (phone, email) as PHP-serialized
-         * arrays in wp_postmeta — a plain meta_value equality check will never match.
-         *
-         * We search using a LIKE pattern against the serialized string representation:
-         *   s:{byte-length}:"{value}"
-         * The byte-length prefix prevents a shorter value (e.g. "12") from matching
-         * inside a longer serialized string (e.g. "1234567890").
+         * DT never stores a communication channel value under the bare field key.
+         * Each value gets its own postmeta row under a randomly-suffixed key (e.g.
+         * 'contact_phone_a1b', built by DT_Posts::create_channel_metakey()), with the
+         * raw value as a plain string — plus a sibling 'contact_phone_a1b_details' row
+         * holding extra data (verified flag, etc). So matching has to key off a LIKE
+         * prefix rather than an exact key, and explicitly exclude the details rows.
          *
          * @return int|null Post ID on match, null if neither value produces a hit.
          */
@@ -74,17 +73,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
             global $wpdb;
 
             if ( ! empty( $phone ) ) {
-                $phone_like = '%s:' . strlen( $phone ) . ':"' . $wpdb->esc_like( $phone ) . '"%';
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $post_id = $wpdb->get_var( $wpdb->prepare(
                     "SELECT pm.post_id FROM {$wpdb->postmeta} pm
                      INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                     WHERE pm.meta_key = 'contact_phone'
-                       AND pm.meta_value LIKE %s
+                     WHERE pm.meta_key LIKE %s
+                       AND pm.meta_key NOT LIKE %s
+                       AND pm.meta_value = %s
                        AND p.post_type = 'contacts'
                        AND p.post_status = 'publish'
                      LIMIT 1",
-                    $phone_like
+                    $wpdb->esc_like( 'contact_phone' ) . '%',
+                    '%_details',
+                    $phone
                 ) );
 
                 if ( ! empty( $post_id ) ) {
@@ -98,17 +99,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
             }
 
             if ( ! empty( $email ) ) {
-                $email_like = '%s:' . strlen( $email ) . ':"' . $wpdb->esc_like( $email ) . '"%';
                 // phpcs:ignore WordPress.DB.DirectDatabaseQuery
                 $post_id = $wpdb->get_var( $wpdb->prepare(
                     "SELECT pm.post_id FROM {$wpdb->postmeta} pm
                      INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                     WHERE pm.meta_key = 'contact_email'
-                       AND pm.meta_value LIKE %s
+                     WHERE pm.meta_key LIKE %s
+                       AND pm.meta_key NOT LIKE %s
+                       AND pm.meta_value = %s
                        AND p.post_type = 'contacts'
                        AND p.post_status = 'publish'
                      LIMIT 1",
-                    $email_like
+                    $wpdb->esc_like( 'contact_email' ) . '%',
+                    '%_details',
+                    $email
                 ) );
 
                 if ( ! empty( $post_id ) ) {
@@ -144,14 +147,19 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
             $candidates = $wpdb->get_results( $wpdb->prepare(
                 "SELECT pm.post_id, pm.meta_value FROM {$wpdb->postmeta} pm
                  INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-                 WHERE pm.meta_key = 'contact_phone'
+                 WHERE pm.meta_key LIKE %s
+                   AND pm.meta_key NOT LIKE %s
                    AND pm.meta_value LIKE %s
                    AND p.post_type = 'contacts'
                    AND p.post_status = 'publish'
                  LIMIT 50",
+                $wpdb->esc_like( 'contact_phone' ) . '%',
+                '%_details',
                 '%' . $wpdb->esc_like( $suffix ) . '%'
             ) );
 
+            // Values are stored as plain strings; maybe_unserialize()/flatten_strings()
+            // are a defensive no-op here in case a value ever legitimately is an array.
             foreach ( (array) $candidates as $row ) {
                 $stored_values = $this->flatten_strings( maybe_unserialize( $row->meta_value ) );
                 foreach ( $stored_values as $stored_value ) {

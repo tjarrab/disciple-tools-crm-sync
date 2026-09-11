@@ -123,14 +123,87 @@ class FieldMapperTest extends BrainMonkeyTestCase {
 
     public static function custom_fields_provider(): array {
         return [
-            'text'         => [ 'text', 'High', 'High' ],
-            'multi_select' => [ 'multi_select', 'sports', [ 'values' => [ [ 'value' => 'sports' ] ] ] ],
-            'date'         => [ 'date', '1990-06-15T00:00:00Z', '1990-06-15' ],
-            'number'       => [ 'number', '42', 42 ],
-            'boolean_true' => [ 'boolean', 'true', true ],
-            'boolean_false' => [ 'boolean', '0', false ],
-            'textarea'     => [ 'textarea', 'Some notes here', 'Some notes here' ],
+            'text'                => [ 'text', 'High', 'High' ],
+            'multi_select'        => [ 'multi_select', 'sports', [ 'values' => [ [ 'value' => 'sports' ] ] ] ],
+            'communication_channel' => [ 'communication_channel', '123 Main St', [ 'values' => [ [ 'value' => '123 Main St' ] ] ] ],
+            'date'                => [ 'date', '1990-06-15T00:00:00Z', '1990-06-15' ],
+            'number'              => [ 'number', '42', 42 ],
+            'boolean_true'        => [ 'boolean', 'true', true ],
+            'boolean_false'       => [ 'boolean', '0', false ],
+            'textarea'            => [ 'textarea', 'Some notes here', 'Some notes here' ],
         ];
+    }
+
+// Location field type dispatch
+
+    public function test_map_custom_fields_location_resolves_exact_match(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'state' => [ 'dt_key' => 'location_grid', 'dt_type' => 'location' ],
+        ] );
+        Disciple_Tools_Mapping_Queries::$search_location_grid_by_name_result = [
+            'location_grid' => [
+                [ 'grid_id' => 555, 'level' => 1, 'label' => 'Yemen > Weleya' ],
+            ],
+            'total' => 1,
+        ];
+
+        $fields = $this->mapper->map_custom_fields( [
+            'custom_fields' => [ [ 'name' => 'state', 'value' => 'Weleya' ] ],
+        ] );
+
+        $this->assertSame( [ 'values' => [ [ 'value' => 555 ] ] ], $fields['location_grid'] );
+    }
+
+    public function test_map_custom_fields_location_skips_on_no_match(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'state' => [ 'dt_key' => 'location_grid', 'dt_type' => 'location' ],
+        ] );
+        Disciple_Tools_Mapping_Queries::$search_location_grid_by_name_result = [ 'location_grid' => [], 'total' => 0 ];
+
+        $fields = $this->mapper->map_custom_fields( [
+            'custom_fields' => [ [ 'name' => 'state', 'value' => 'Nowhereland' ] ],
+        ] );
+
+        $this->assertArrayNotHasKey( 'location_grid', $fields );
+    }
+
+    public function test_map_custom_fields_location_skips_on_ambiguous_match(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'state' => [ 'dt_key' => 'location_grid', 'dt_type' => 'location' ],
+        ] );
+        // Two different places share the same leaf name at different levels of the hierarchy.
+        Disciple_Tools_Mapping_Queries::$search_location_grid_by_name_result = [
+            'location_grid' => [
+                [ 'grid_id' => 111, 'level' => 2, 'label' => 'Yemen > Al Hudaydah > Medina' ],
+                [ 'grid_id' => 222, 'level' => 2, 'label' => 'Saudi Arabia > Al Madinah > Medina' ],
+            ],
+            'total' => 2,
+        ];
+
+        $fields = $this->mapper->map_custom_fields( [
+            'custom_fields' => [ [ 'name' => 'state', 'value' => 'Medina' ] ],
+        ] );
+
+        $this->assertArrayNotHasKey( 'location_grid', $fields );
+    }
+
+    public function test_map_custom_fields_location_ignores_partial_label_match(): void {
+        Functions\when( 'get_option' )->justReturn( [
+            'state' => [ 'dt_key' => 'location_grid', 'dt_type' => 'location' ],
+        ] );
+        // A fuzzy LIKE hit whose leaf segment isn't an exact match should be rejected.
+        Disciple_Tools_Mapping_Queries::$search_location_grid_by_name_result = [
+            'location_grid' => [
+                [ 'grid_id' => 333, 'level' => 1, 'label' => 'Yemen > Weleya District' ],
+            ],
+            'total' => 1,
+        ];
+
+        $fields = $this->mapper->map_custom_fields( [
+            'custom_fields' => [ [ 'name' => 'state', 'value' => 'Weleya' ] ],
+        ] );
+
+        $this->assertArrayNotHasKey( 'location_grid', $fields );
     }
 
 // get_message_history_target

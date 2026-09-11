@@ -232,6 +232,10 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.11
+
+- Better dedupe and field mapping
+
 ### 1.0.10
 
 - Fixed contact sync creating duplicate records under concurrent imports and merged-contact edge cases

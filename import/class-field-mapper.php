@@ -142,7 +142,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Field_Mapper' ) ) {
                 switch ( $dt_type ) {
                     case 'multi_select':
                     case 'tags':
+                    case 'communication_channel': // e.g. an "Address" field — same values/value shape as phone/email.
                         $fields[ $dt_key ] = [ 'values' => [ [ 'value' => (string) $field_val ] ] ];
+                        break;
+                    case 'location':
+                        $grid_id = $this->resolve_location_grid_id( (string) $field_val );
+                        if ( null !== $grid_id ) {
+                            $fields[ $dt_key ] = [ 'values' => [ [ 'value' => $grid_id ] ] ];
+                        } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                            error_log( sprintf( '[DT CRM Sync] no exact location grid match for field "%s": raw value "%s"', $dt_key, $field_val ) );
+                        }
                         break;
                     case 'number':
                         $fields[ $dt_key ] = (int) $field_val;
@@ -167,6 +176,41 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Field_Mapper' ) ) {
             }
 
             return $fields;
+        }
+
+        /**
+         * Match a CRM location string against DT's location_grid table by exact name.
+         *
+         * search_location_grid_by_name() is a fuzzy LIKE search built for the admin
+         * autocomplete UI, and its 'label' is a hierarchical path (e.g. "Yemen >
+         * Weleya"), not the raw place name. We can't tell a real match from a partial
+         * one on label text alone, so this only accepts a candidate whose last path
+         * segment equals the CRM value exactly (case-insensitive) — and only if
+         * exactly one candidate qualifies. Anything unmatched or ambiguous (e.g. two
+         * places with the same name at different levels) is left unset rather than
+         * guessed at; the caller skips the field in that case.
+         *
+         * @param string $name Raw location text from the CRM custom field.
+         * @return int|null The matching grid_id, or null if no single exact match was found.
+         */
+        private function resolve_location_grid_id( string $name ): ?int {
+            $name = trim( $name );
+            if ( '' === $name || ! class_exists( 'Disciple_Tools_Mapping_Queries' ) ) {
+                return null;
+            }
+
+            $results = Disciple_Tools_Mapping_Queries::search_location_grid_by_name( [ 'search_query' => $name ] );
+
+            $matches = [];
+            foreach ( $results['location_grid'] ?? [] as $row ) {
+                $segments = explode( ' > ', $row['label'] ?? '' );
+                $leaf     = trim( end( $segments ) );
+                if ( 0 === strcasecmp( $leaf, $name ) ) {
+                    $matches[] = (int) $row['grid_id'];
+                }
+            }
+
+            return 1 === count( $matches ) ? $matches[0] : null;
         }
 
         /**

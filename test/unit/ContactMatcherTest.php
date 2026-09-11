@@ -4,7 +4,9 @@
  *
  * Covers both duplicate-detection strategies:
  *   - Fast path: indexed meta lookup via find_by_connector_id()
- *   - Slow path: serialized LIKE query via find_by_phone_or_email()
+ *   - Slow path: LIKE query against DT's per-channel phone/email postmeta via
+ *     find_by_phone_or_email() (each value lives under a randomly-suffixed key
+ *     like 'contact_phone_a1b', never the bare 'contact_phone' key)
  */
 
 use Brain\Monkey\Functions;
@@ -17,6 +19,16 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         parent::setUp();
         Functions\when( 'sanitize_text_field' )->returnArg();
         $this->matcher = new Disciple_Tools_CRM_Sync_Contact_Matcher( '_respond_io_' );
+    }
+
+    /**
+     * Mirrors how the $wpdb test stub's prepare() renders a %s value that was
+     * already run through esc_like() — i.e. what 'contact_phone' looks like once
+     * it's embedded in a LIKE-pattern meta_key argument.
+     */
+    private function escaped_key_prefix( string $key ): string {
+        global $wpdb;
+        return addslashes( $wpdb->esc_like( $key ) );
     }
 
 // find_by_connector_id
@@ -67,12 +79,12 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         // The only query issued must be for contact_email — the phone query must be
         // skipped entirely when the phone argument is empty.
         $this->assertStringContainsString(
-            'contact_email',
+            $this->escaped_key_prefix( 'contact_email' ),
             (string) $wpdb->last_get_var_sql,
             'Email LIKE query must be issued when phone is empty.'
         );
         $this->assertStringNotContainsString(
-            'contact_phone',
+            $this->escaped_key_prefix( 'contact_phone' ),
             (string) $wpdb->last_get_var_sql,
             'Phone LIKE query must not be issued when phone is empty.'
         );
@@ -82,6 +94,50 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         $result = $this->matcher->find_by_phone_or_email( '', '' );
 
         $this->assertNull( $result );
+    }
+
+// Real DT postmeta key format (regression coverage for the duplicate-matching fix)
+
+    /**
+     * DT never writes a bare 'contact_phone' row — every channel value gets its own
+     * postmeta row under a key with a random suffix, e.g. 'contact_phone_a1b'
+     * (see DT_Posts::create_channel_metakey()). A query that only matches the exact
+     * bare key would never find any real contact, which was the actual bug.
+     */
+    public function test_find_by_phone_matches_a_randomly_suffixed_meta_key(): void {
+        global $wpdb;
+        $wpdb->next_get_var_result = 88;
+
+        $result = $this->matcher->find_by_phone_or_email( '5555550100', '' );
+
+        $this->assertSame( 88, $result );
+        $this->assertStringContainsString(
+            "meta_key LIKE '" . $this->escaped_key_prefix( 'contact_phone' ) . "%'",
+            (string) $wpdb->last_get_var_sql,
+            'The query must match keys by prefix, not by exact equality, to find real DT contact_phone_xxx rows.'
+        );
+        $this->assertStringContainsString(
+            "meta_key NOT LIKE '%_details'",
+            (string) $wpdb->last_get_var_sql,
+            "The query must exclude a channel's sibling _details row."
+        );
+    }
+
+    public function test_find_by_email_matches_a_randomly_suffixed_meta_key(): void {
+        global $wpdb;
+        $wpdb->next_get_var_result = 89;
+
+        $result = $this->matcher->find_by_phone_or_email( '', 'jane@example.com' );
+
+        $this->assertSame( 89, $result );
+        $this->assertStringContainsString(
+            "meta_key LIKE '" . $this->escaped_key_prefix( 'contact_email' ) . "%'",
+            (string) $wpdb->last_get_var_sql
+        );
+        $this->assertStringContainsString(
+            "meta_key NOT LIKE '%_details'",
+            (string) $wpdb->last_get_var_sql
+        );
     }
 
 // Normalized phone fallback (formatting differences)
@@ -117,6 +173,8 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
      * A phone stored without formatting (as Respond.io would have sent it on an
      * earlier sync) must still match a differently-formatted incoming value —
      * this is the fallback that fires when the exact-substring check misses.
+     * The stored value is a plain string, as DT actually writes it — not wrapped
+     * in a serialized array.
      */
     public function test_find_by_phone_matches_differently_formatted_stored_value(): void {
         global $wpdb;
@@ -124,13 +182,22 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         $wpdb->next_get_results_result = [
             (object) [
                 'post_id'    => 55,
-                'meta_value' => serialize( [ 'values' => [ [ 'value' => '5555550100', 'key' => 'phone_1' ] ] ] ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+                'meta_value' => '5555550100',
             ],
         ];
 
         $result = $this->matcher->find_by_phone_or_email( '+1 (555) 555-0100', '' );
 
         $this->assertSame( 55, $result, 'A country-code-prefixed number must match its unprefixed stored counterpart.' );
+        $this->assertStringContainsString(
+            "meta_key LIKE '" . $this->escaped_key_prefix( 'contact_phone' ) . "%'",
+            (string) $wpdb->last_get_results_sql,
+            'The normalized-phone fallback must also match keys by prefix, not exact equality.'
+        );
+        $this->assertStringContainsString(
+            "meta_key NOT LIKE '%_details'",
+            (string) $wpdb->last_get_results_sql
+        );
     }
 
     public function test_find_by_phone_normalized_fallback_returns_null_when_no_candidate_agrees(): void {
@@ -139,7 +206,7 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         $wpdb->next_get_results_result = [
             (object) [
                 'post_id'    => 55,
-                'meta_value' => serialize( [ 'values' => [ [ 'value' => '5559990000' ] ] ] ), // phpcs:ignore WordPress.PHP.DiscouragedPHPFunctions.serialize_unserialize
+                'meta_value' => '5559990000',
             ],
         ];
 
@@ -157,22 +224,24 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         $this->assertNull( $result, 'Numbers under 7 digits must not risk a false-positive normalized match.' );
     }
 
-// SQL wildcard escaping
+// SQL wildcard safety
 
-    public function test_find_by_phone_escapes_sql_wildcard_characters_via_esc_like(): void {
+    /**
+     * The incoming phone is compared with exact equality (meta_value = %s), not
+     * embedded in a LIKE pattern, so a value containing SQL wildcard characters
+     * ('%', '_') can't accidentally broaden the match to other contacts' numbers.
+     */
+    public function test_find_by_phone_compares_meta_value_by_exact_equality(): void {
         global $wpdb;
-        $phone                    = '50%_test';
-        $wpdb->next_get_var_result = 77;
+        $phone                      = '50%_test';
+        $wpdb->next_get_var_result  = 77;
 
         $result = $this->matcher->find_by_phone_or_email( $phone, '' );
 
         $this->assertSame( 77, $result );
-
-        $expected_in_sql = addslashes( $wpdb->esc_like( $phone ) );
         $this->assertStringContainsString(
-            $expected_in_sql,
-            $wpdb->last_get_var_sql,
-            'SQL wildcard characters in the phone number must be escaped by esc_like() before the LIKE query.'
+            "meta_value = '50%_test'",
+            (string) $wpdb->last_get_var_sql
         );
     }
 }

@@ -306,7 +306,11 @@ $wpdb = new class() {
      */
     public array $next_get_results_result = [];
 
+    /** Captured SQL from the last get_results() call. Reset in BrainMonkeyTestCase::setUp(). */
+    public ?string $last_get_results_sql = null;
+
     public function get_results( $query = null, $output = 'OBJECT' ): array { // phpcs:ignore
+        $this->last_get_results_sql    = $query;
         $result                        = $this->next_get_results_result;
         $this->next_get_results_result = [];
         return $result;
@@ -369,6 +373,25 @@ if ( ! class_exists( 'DT_Posts' ) ) {
 
         public static function get_post_settings( $type ): array { // phpcs:ignore
             return [ 'fields' => [] ];
+        }
+    }
+}
+
+// Disciple_Tools_Mapping_Queries stub
+if ( ! class_exists( 'Disciple_Tools_Mapping_Queries' ) ) {
+    /**
+     * Stub for the location_grid name search used by Field_Mapper's location resolution.
+     * Call Disciple_Tools_Mapping_Queries::reset() in BrainMonkeyTestCase::setUp() between tests.
+     */
+    class Disciple_Tools_Mapping_Queries {
+        public static array $search_location_grid_by_name_result = [ 'location_grid' => [], 'total' => 0 ];
+
+        public static function reset(): void {
+            self::$search_location_grid_by_name_result = [ 'location_grid' => [], 'total' => 0 ];
+        }
+
+        public static function search_location_grid_by_name( $args ): array { // phpcs:ignore
+            return self::$search_location_grid_by_name_result;
         }
     }
 }

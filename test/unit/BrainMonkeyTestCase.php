@@ -26,8 +26,10 @@ abstract class BrainMonkeyTestCase extends \PHPUnit\Framework\TestCase {
         $wpdb->next_get_results_result  = [];
         $wpdb->last_query_sql           = null;
         $wpdb->last_get_var_sql         = null;
+        $wpdb->last_get_results_sql     = null;
         $wpdb->next_query_result        = 0;
         DT_Posts::reset();
+        Disciple_Tools_Mapping_Queries::reset();
         Disciple_Tools_CRM_Sync::$test_decrypt_fn = null;
         Disciple_Tools_CRM_Sync::$reschedule_email_digest_calls = [];
     }
