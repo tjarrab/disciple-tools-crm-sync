@@ -587,7 +587,14 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
         Functions\when( 'get_posts' )->justReturn( [] );
         Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
         Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
-        Functions\when( 'get_option' )->justReturn( [] );
+        // A default region (US: +1, 10-digit local) so the country-code and bare
+        // forms of the same number canonicalize to a single lock key.
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) {
+            if ( 'dt_crm_sync_settings' === $key ) {
+                return [ 'default_country_code' => '1', 'national_number_length' => 10 ];
+            }
+            return $default;
+        } );
         Functions\when( 'get_post_meta' )->justReturn( '' );
         Functions\when( 'add_post_meta' )->justReturn( true );
         Functions\when( 'update_post_meta' )->justReturn( true );
@@ -737,6 +744,149 @@ class ImportProcessorTest extends BrainMonkeyTestCase {
         $history_meta = array_values( array_filter( $updated_meta, fn( $m ) => str_contains( $m['key'], 'history_synced' ) ) );
         $this->assertNotEmpty( $history_meta, 'history_synced meta must be written after a successful message import.' );
         $this->assertSame( '1', $history_meta[0]['value'] );
+    }
+
+    /**
+     * A contact matched only by a shared phone number — one this sync never
+     * created (it carries no connector-ID meta) — must be left completely
+     * untouched when "update existing contacts" is off. Its name and every other
+     * field stay exactly as the operator left them.
+     */
+    public function test_process_single_contact_skips_existing_matched_by_phone(): void {
+        global $wpdb;
+        Functions\when( 'get_posts' )->justReturn( [] );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Incoming Name","phone":"+15555550100"}' );
+
+        // No connector-ID match, but the phone lookup finds an existing DT post.
+        $wpdb->next_get_var_result = 55;
+
+        // A foreign contact must not have its conversation log written either.
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->expects( $this->never() )->method( 'import' );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'scheduled' );
+
+        $this->assertTrue( $result );
+        $this->assertEmpty( DT_Posts::$update_post_calls, 'An existing contact matched by phone must not be updated when skip_existing is on.' );
+        $this->assertEmpty( DT_Posts::$create_post_calls, 'No duplicate contact may be created for a phone match.' );
+
+        $skipped = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'skipped' === ( $c['data']['status'] ?? '' ) && str_contains( $c['data']['message'] ?? '', 'phone/email' )
+        );
+        $this->assertNotEmpty( $skipped, 'The phone/email match must be logged as skipped for skip_existing.' );
+    }
+
+    /**
+     * A contact this sync previously created (connector-ID match) whose message
+     * history never finished importing is allowed to finish it even with
+     * skip_existing on — but the name and other fields must not be rewritten
+     * while that catch-up runs.
+     */
+    public function test_process_single_contact_completes_history_without_rewriting_fields(): void {
+        global $wpdb;
+        Functions\when( 'get_posts' )->justReturn( [ 10 ] );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Incoming Name","email":"t@example.com"}' );
+        // history_synced meta is unset — a prior run was cut off mid-import.
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+
+        $updated_meta = [];
+        Functions\when( 'update_post_meta' )->alias( function ( $post_id, $key, $value ) use ( &$updated_meta ) {
+            $updated_meta[] = [ 'key' => $key, 'value' => $value ];
+            return true;
+        } );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $mock_writer->expects( $this->never() )->method( 'upsert' );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->expects( $this->once() )->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'scheduled' );
+
+        $this->assertTrue( $result );
+        $this->assertEmpty( DT_Posts::$update_post_calls, 'Fields must not be rewritten while completing an interrupted history import.' );
+        $this->assertEmpty( DT_Posts::$create_post_calls );
+
+        $history_meta = array_filter( $updated_meta, fn( $m ) => str_contains( $m['key'], 'history_synced' ) );
+        $this->assertNotEmpty( $history_meta, 'history_synced must be written once the interrupted import completes.' );
+    }
+
+    /**
+     * With "update existing contacts" enabled, an existing contact IS updated —
+     * the new skip guard must not over-reach and block a deliberate update.
+     */
+    public function test_process_single_contact_updates_existing_when_update_enabled(): void {
+        Functions\when( 'get_posts' )->justReturn( [ 10 ] );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"firstName":"Incoming Name","email":"t@example.com"}' );
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+        Functions\when( 'add_post_meta' )->justReturn( true );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $result = $this->processor->expose_process_single_contact( '42', 'scheduled', false );
+
+        $this->assertTrue( $result );
+        $this->assertNotEmpty( DT_Posts::$update_post_calls, 'An existing contact must be updated when update-existing is enabled.' );
+        $this->assertSame( 10, end( DT_Posts::$update_post_calls )['id'] ?? null );
+    }
+
+    /**
+     * A CRM-side merge that adopts an already-existing canonical contact must not
+     * rewrite that contact's fields when skip_existing is on. The merge routing
+     * (and completing an unfinished history import) is still allowed.
+     */
+    public function test_process_single_contact_merge_does_not_rewrite_existing_fields_when_skip_existing(): void {
+        global $wpdb;
+        // 1st get_posts call: pre-merge-ID lookup -> not found. 2nd: canonical-ID lookup -> found (77).
+        $get_posts_call = 0;
+        Functions\when( 'get_posts' )->alias( function () use ( &$get_posts_call ) {
+            $get_posts_call++;
+            return 1 === $get_posts_call ? [] : [ 77 ];
+        } );
+        Functions\when( 'get_option' )->justReturn( [] );
+        Functions\when( 'wp_safe_remote_request' )->justReturn( [ '_mocked' => true ] );
+        Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+        // No phone/email, so the only match is the canonical post via the merge branch.
+        Functions\when( 'wp_remote_retrieve_body' )->justReturn( '{"id":"canonical_id","firstName":"Incoming Name"}' );
+        // history_synced unset — the canonical post's import never finished.
+        Functions\when( 'get_post_meta' )->justReturn( '' );
+
+        $mock_writer = $this->createMock( Disciple_Tools_CRM_Sync_Activity_Feed_Writer::class );
+        $mock_writer->expects( $this->never() )->method( 'upsert' );
+        $this->processor->set_activity_feed_writer( $mock_writer );
+
+        $mock_importer = $this->createMock( Disciple_Tools_CRM_Sync_Message_Importer::class );
+        $mock_importer->expects( $this->once() )->method( 'import' )->willReturn( null );
+        $this->processor->set_message_importer( $mock_importer );
+
+        $result = $this->processor->expose_process_single_contact( 'stale_id', 'scheduled' );
+
+        $this->assertTrue( $result );
+        $this->assertEmpty( DT_Posts::$update_post_calls, 'A merged canonical contact must not have its fields rewritten under skip_existing.' );
+        $this->assertEmpty( DT_Posts::$create_post_calls );
+
+        $merged = array_filter(
+            $wpdb->insert_calls,
+            fn( $c ) => 'merged' === ( $c['data']['status'] ?? '' ) && str_contains( $c['data']['message'] ?? '', 'canonical ID only' )
+        );
+        $this->assertNotEmpty( $merged, 'The canonical-ID adoption must still be logged as a merge.' );
     }
 
 // Merged contact handling

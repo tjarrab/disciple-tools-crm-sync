@@ -405,7 +405,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Automations' ) ) {
                                     name="skip_existing"
                                     value="1"
                                     checked>
-                            <p class="description"><?php esc_html_e( 'When checked, contacts that are already in Disciple.Tools will be skipped. Only new contacts will be created.', 'disciple-tools-crm-sync' ); ?></p>
+                            <p class="description"><?php esc_html_e( 'When checked, contacts already in Disciple.Tools are left unchanged — their names and other details are never overwritten. Only new contacts are created.', 'disciple-tools-crm-sync' ); ?></p>
                         </td>
                     </tr>                </table>
 

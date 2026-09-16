@@ -20,12 +20,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
     class Disciple_Tools_CRM_Sync_Contact_Matcher {
 
         /**
-         * Length of the trailing digit suffix used both to prefilter normalized-phone
-         * candidates and as the equivalence key for the per-contact phone lock in
-         * import-processor.php — the two must stay in sync or the lock can miss a pair
-         * of numbers the matcher itself would consider the same.
+         * Shortest run of digits we'll treat as a usable phone identity. Anything with
+         * fewer significant digits is ignored for matching and locking — comparing such
+         * short numbers risks tying unrelated contacts together.
          */
-        private const PHONE_SUFFIX_LENGTH = 7;
+        private const MIN_PHONE_DIGITS = 7;
 
         /**
          * @param string $meta_key_prefix Connector-specific meta key prefix,
@@ -123,25 +122,35 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
         }
 
         /**
-         * Digit-only fallback match for when the exact substring check above misses
-         * because the incoming number is formatted differently than what's stored
-         * (spaces, dashes, parentheses, a leading "+", or a missing/extra country code).
+         * Digit-only fallback for when the exact-substring check above misses because
+         * the incoming number is formatted differently from what's stored — different
+         * punctuation, a leading "+", or a country code that one side carries and the
+         * other drops.
          *
-         * Prefilters with a LIKE on the trailing 7 digits — the part of a number least
-         * likely to be interrupted by punctuation — then confirms each candidate in PHP
-         * by comparing fully digit-stripped values.
+         * Both sides are reduced to a canonical form (see canonical_phone()) and
+         * compared for exact equality, so two genuinely different local numbers can't
+         * collapse into one the way a loose suffix comparison would. The SQL LIKE only
+         * narrows the candidate set; the canonical comparison in PHP is what decides.
          *
-         * @return int|null Post ID on match, null if no candidate's digits agree.
+         * @return int|null Post ID on match, null if no candidate's canonical form agrees.
          */
         private function find_by_normalized_phone( string $phone ): int|null {
             global $wpdb;
 
-            $incoming_digits = self::normalize_phone_digits( $phone );
-            if ( strlen( $incoming_digits ) < self::PHONE_SUFFIX_LENGTH ) {
-                // Too short to compare without a meaningful risk of a false match.
+            $region             = self::default_phone_region();
+            $incoming_canonical = self::canonical_phone( $phone, $region['cc'], $region['len'], $region['trunk'] );
+            if ( strlen( $incoming_canonical ) < self::MIN_PHONE_DIGITS ) {
+                // Too few digits to compare without a meaningful risk of a false match.
                 return null;
             }
-            $suffix = substr( $incoming_digits, -self::PHONE_SUFFIX_LENGTH );
+
+            // The national significant digits are the part that shows up verbatim in a
+            // stored value whether or not it carries a country code, so they make the
+            // most reliable LIKE prefilter.
+            $token = self::national_token( $phone, $region );
+            if ( strlen( $token ) < self::MIN_PHONE_DIGITS ) {
+                return null;
+            }
 
             // phpcs:ignore WordPress.DB.DirectDatabaseQuery
             $candidates = $wpdb->get_results( $wpdb->prepare(
@@ -155,7 +164,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
                  LIMIT 50",
                 $wpdb->esc_like( 'contact_phone' ) . '%',
                 '%_details',
-                '%' . $wpdb->esc_like( $suffix ) . '%'
+                '%' . $wpdb->esc_like( $token ) . '%'
             ) );
 
             // Values are stored as plain strings; maybe_unserialize()/flatten_strings()
@@ -163,13 +172,7 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
             foreach ( (array) $candidates as $row ) {
                 $stored_values = $this->flatten_strings( maybe_unserialize( $row->meta_value ) );
                 foreach ( $stored_values as $stored_value ) {
-                    $stored_digits = self::normalize_phone_digits( $stored_value );
-                    if ( strlen( $stored_digits ) < self::PHONE_SUFFIX_LENGTH ) {
-                        continue;
-                    }
-                    // A suffix match (rather than strict equality) tolerates one side
-                    // carrying a country code that the other omits.
-                    if ( str_ends_with( $stored_digits, $incoming_digits ) || str_ends_with( $incoming_digits, $stored_digits ) ) {
+                    if ( self::canonical_phone( $stored_value, $region['cc'], $region['len'], $region['trunk'] ) === $incoming_canonical ) {
                         return (int) $row->post_id;
                     }
                 }
@@ -181,27 +184,125 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Contact_Matcher' ) ) {
         /**
          * Strips everything but digits from a phone number so differently-formatted
          * values (spaces, dashes, parentheses, a leading "+") can be compared directly.
-         * Shared with import-processor.php so the per-contact phone lock uses the same
-         * identity as this matching logic.
          */
         public static function normalize_phone_digits( string $phone ): string {
             return (string) preg_replace( '/\D+/', '', $phone );
         }
 
         /**
-         * Trailing-digit-suffix key used to identify "the same phone number" for
-         * locking purposes — matches the equivalence class find_by_normalized_phone()
-         * uses, so two differently-formatted representations of the same number (with
-         * or without a country code) always resolve to one lock, not two.
+         * Reduce a phone number to a comparable canonical form.
          *
-         * @return string The suffix key, or '' if the number is too short to use safely.
+         * Everything but digits is dropped, a leading international access code (00) is
+         * removed, and — when a default region is configured — a bare local number is
+         * expanded to its full international form so it lines up with the same number
+         * stored with its country code. Numbers that don't fit the configured region
+         * (foreign ones) are left as their raw digits so we never mangle them or
+         * falsely treat two different numbers as one.
+         *
+         * @param string      $phone        Raw number in any format.
+         * @param string|null $cc           Default country dial code; null reads settings.
+         * @param int|null    $national_len Local (national) number length; null reads settings.
+         * @param string|null $trunk        National trunk prefix, e.g. "0"; null reads settings.
+         */
+        public static function canonical_phone( string $phone, ?string $cc = null, ?int $national_len = null, ?string $trunk = null ): string {
+            if ( null === $cc || null === $national_len || null === $trunk ) {
+                $region       = self::default_phone_region();
+                $cc           = $cc ?? $region['cc'];
+                $national_len = $national_len ?? $region['len'];
+                $trunk        = $trunk ?? $region['trunk'];
+            }
+
+            $digits = self::normalize_phone_digits( $phone );
+
+            // "00" is the international call prefix across most of the world; dropping it
+            // makes 0033... read the same as +33... once the "+" is already gone.
+            if ( str_starts_with( $digits, '00' ) ) {
+                $digits = substr( $digits, 2 );
+            }
+
+            if ( '' === $cc || $national_len <= 0 ) {
+                return $digits;
+            }
+
+            $national = self::national_part( $digits, $cc, $national_len, $trunk );
+
+            return null === $national ? $digits : $cc . $national;
+        }
+
+        /**
+         * Pull the national significant digits out of a number for the configured
+         * region, or return null when it doesn't fit that region's shape — a foreign
+         * number, or simply the wrong length.
+         */
+        private static function national_part( string $digits, string $cc, int $national_len, string $trunk ): ?string {
+            // Already a full international number for the default country.
+            if ( str_starts_with( $digits, $cc ) && strlen( $digits ) === strlen( $cc ) + $national_len ) {
+                return substr( $digits, strlen( $cc ) );
+            }
+
+            // Local number written with a trunk prefix — the leading digit(s) domestic
+            // dialling uses but the international form drops (e.g. the 0 in 06 12 34...).
+            if ( '' !== $trunk && str_starts_with( $digits, $trunk ) && strlen( $digits ) - strlen( $trunk ) === $national_len ) {
+                return substr( $digits, strlen( $trunk ) );
+            }
+
+            // Bare local number, no country code and no trunk prefix.
+            if ( strlen( $digits ) === $national_len ) {
+                return $digits;
+            }
+
+            return null;
+        }
+
+        /**
+         * Digit string used to prefilter candidate rows in SQL: the national part when
+         * the number fits the configured region, otherwise the trailing digits as a
+         * best-effort narrow for foreign numbers.
+         */
+        private static function national_token( string $phone, array $region ): string {
+            $digits = self::normalize_phone_digits( $phone );
+            if ( str_starts_with( $digits, '00' ) ) {
+                $digits = substr( $digits, 2 );
+            }
+
+            if ( '' !== $region['cc'] && $region['len'] > 0 ) {
+                $national = self::national_part( $digits, $region['cc'], $region['len'], $region['trunk'] );
+                if ( null !== $national ) {
+                    return $national;
+                }
+            }
+
+            return strlen( $digits ) <= self::MIN_PHONE_DIGITS ? $digits : substr( $digits, -self::MIN_PHONE_DIGITS );
+        }
+
+        /**
+         * Read the configured default phone region from settings. Blank/zero values
+         * mean "no region", in which case matching falls back to a plain digit compare.
+         *
+         * @return array{cc:string,len:int,trunk:string}
+         */
+        private static function default_phone_region(): array {
+            $settings = get_option( 'dt_crm_sync_settings', [] );
+            $settings = is_array( $settings ) ? $settings : [];
+
+            return [
+                'cc'    => self::normalize_phone_digits( (string) ( $settings['default_country_code'] ?? '' ) ),
+                'len'   => max( 0, (int) ( $settings['national_number_length'] ?? 0 ) ),
+                'trunk' => self::normalize_phone_digits( (string) ( $settings['national_trunk_prefix'] ?? '' ) ),
+            ];
+        }
+
+        /**
+         * Canonical key used to identify "the same phone number" for locking. Matches
+         * the equivalence class find_by_normalized_phone() compares on, so two
+         * differently-formatted representations of one number — with or without a
+         * country code — always resolve to a single lock rather than two.
+         *
+         * @return string The canonical number, or '' if it's too short to use safely.
          */
         public static function phone_lock_key( string $phone ): string {
-            $digits = self::normalize_phone_digits( $phone );
-            if ( strlen( $digits ) < self::PHONE_SUFFIX_LENGTH ) {
-                return '';
-            }
-            return substr( $digits, -self::PHONE_SUFFIX_LENGTH );
+            $canonical = self::canonical_phone( $phone );
+            return strlen( $canonical ) < self::MIN_PHONE_DIGITS ? '' : $canonical;
         }
 
         /**

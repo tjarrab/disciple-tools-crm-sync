@@ -232,6 +232,10 @@ Visit the [Disciple.Tools Community](https://disciple.tools) for more informatio
 
 ## Changelog
 
+### 1.0.12
+
+- Clarified the update import setting and fixed an issue with names being updated on resync
+
 ### 1.0.11
 
 - Better dedupe and field mapping

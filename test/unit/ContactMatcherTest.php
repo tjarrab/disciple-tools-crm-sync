@@ -18,7 +18,26 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
     protected function setUp(): void {
         parent::setUp();
         Functions\when( 'sanitize_text_field' )->returnArg();
+        // The matcher reads the default phone region from settings; default to
+        // "no region configured" unless a test opts into one.
+        Functions\when( 'get_option' )->justReturn( [] );
         $this->matcher = new Disciple_Tools_CRM_Sync_Contact_Matcher( '_respond_io_' );
+    }
+
+    /**
+     * Point the matcher at a default phone region for the duration of a test.
+     */
+    private function set_phone_region( string $cc, int $len, string $trunk = '' ): void {
+        Functions\when( 'get_option' )->alias( function ( $key, $default = false ) use ( $cc, $len, $trunk ) {
+            if ( 'dt_crm_sync_settings' === $key ) {
+                return [
+                    'default_country_code'   => $cc,
+                    'national_number_length' => $len,
+                    'national_trunk_prefix'  => $trunk,
+                ];
+            }
+            return $default;
+        } );
     }
 
     /**
@@ -159,6 +178,7 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
      * would contend for different locks and could still both create a duplicate.
      */
     public function test_phone_lock_key_is_the_same_for_a_number_with_or_without_country_code(): void {
+        $this->set_phone_region( '1', 10 );
         $this->assertSame(
             Disciple_Tools_CRM_Sync_Contact_Matcher::phone_lock_key( '5555550100' ),
             Disciple_Tools_CRM_Sync_Contact_Matcher::phone_lock_key( '+1 (555) 555-0100' )
@@ -178,6 +198,7 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
      */
     public function test_find_by_phone_matches_differently_formatted_stored_value(): void {
         global $wpdb;
+        $this->set_phone_region( '1', 10 );
         $wpdb->next_get_var_result     = null; // exact substring check misses
         $wpdb->next_get_results_result = [
             (object) [
@@ -222,6 +243,78 @@ class ContactMatcherTest extends BrainMonkeyTestCase {
         $result = $this->matcher->find_by_phone_or_email( '12345', '' );
 
         $this->assertNull( $result, 'Numbers under 7 digits must not risk a false-positive normalized match.' );
+    }
+
+// Country-code-aware canonical matching
+
+    /**
+     * The whole point of the fix: DT has an 8-digit local number saved with no country
+     * code, Respond.io sends the same person with its +216 country code and its own
+     * punctuation, and they must resolve to the one contact.
+     */
+    public function test_find_by_phone_matches_bare_local_number_against_country_code_form(): void {
+        global $wpdb;
+        $this->set_phone_region( '216', 8 );
+        $wpdb->next_get_var_result     = null; // exact substring check misses
+        $wpdb->next_get_results_result = [
+            (object) [ 'post_id' => 60, 'meta_value' => '22222222' ],
+        ];
+
+        $result = $this->matcher->find_by_phone_or_email( '+216-222-222-22', '' );
+
+        $this->assertSame( 60, $result );
+    }
+
+    /**
+     * Countries that use a trunk prefix (a leading 0 for domestic dialling that the
+     * international form drops) still have to line up: 06 12 34 56 78 is +33 6 12 34...
+     */
+    public function test_find_by_phone_handles_a_trunk_prefixed_local_number(): void {
+        global $wpdb;
+        $this->set_phone_region( '33', 9, '0' );
+        $wpdb->next_get_var_result     = null;
+        $wpdb->next_get_results_result = [
+            (object) [ 'post_id' => 61, 'meta_value' => '0612345678' ],
+        ];
+
+        $result = $this->matcher->find_by_phone_or_email( '+33 6 12 34 56 78', '' );
+
+        $this->assertSame( 61, $result, 'A national number written with a leading trunk 0 must match its +CC international form.' );
+    }
+
+    /**
+     * Regression guard for the original bug: a plain trailing-suffix comparison treated
+     * two different local numbers that happened to share their last digits as the same
+     * contact. The full local number is compared now, so these stay distinct.
+     */
+    public function test_find_by_phone_does_not_match_two_different_local_numbers(): void {
+        global $wpdb;
+        $this->set_phone_region( '216', 8 );
+        $wpdb->next_get_var_result     = null;
+        $wpdb->next_get_results_result = [
+            (object) [ 'post_id' => 62, 'meta_value' => '50222222' ],
+        ];
+
+        $result = $this->matcher->find_by_phone_or_email( '20222222', '' );
+
+        $this->assertNull( $result );
+    }
+
+    /**
+     * The default-region assumption only applies to local-shaped numbers. A full
+     * foreign number must never be dragged onto a local contact.
+     */
+    public function test_find_by_phone_does_not_match_a_foreign_number(): void {
+        global $wpdb;
+        $this->set_phone_region( '216', 8 );
+        $wpdb->next_get_var_result     = null;
+        $wpdb->next_get_results_result = [
+            (object) [ 'post_id' => 63, 'meta_value' => '22222222' ],
+        ];
+
+        $result = $this->matcher->find_by_phone_or_email( '+33612345678', '' );
+
+        $this->assertNull( $result );
     }
 
 // SQL wildcard safety

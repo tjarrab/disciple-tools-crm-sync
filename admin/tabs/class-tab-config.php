@@ -97,6 +97,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                 $new_settings['active_connector']              = $connector_slug;
                 $new_settings['connectors'][ $connector_slug ] = $new_creds;
                 $new_settings['purge_on_uninstall']            = ! empty( $values['purge_on_uninstall'] );
+
+                // Phone-matching region (used by the importer's duplicate detection).
+                // Digits only; blank/zero simply means "no default region configured".
+                $new_settings['default_country_code']   = preg_replace( '/\D+/', '', (string) ( $values['default_country_code'] ?? '' ) );
+                $new_settings['national_number_length'] = max( 0, min( 15, (int) ( $values['national_number_length'] ?? 0 ) ) );
+                $new_settings['national_trunk_prefix']  = preg_replace( '/\D+/', '', (string) ( $values['national_trunk_prefix'] ?? '' ) );
+
                 // Remove legacy flat credential keys.
                 unset( $new_settings['base_url'], $new_settings['api_token'], $new_settings['webhook_signing_key'] );
 
@@ -320,6 +327,55 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Tab_Config' ) ) {
                     ) ); ?>
                 </p>
                 <?php $this->render_field_mapping( $active_connector ); ?>
+
+                <h2><?php esc_html_e( 'Contact Matching', 'disciple-tools-crm-sync' ); ?></h2>
+                <p class="description" style="max-width: 40em;">
+                    <?php esc_html_e( 'Imports match an incoming phone number against your existing contacts, ignoring formatting, so the same person is updated rather than duplicated. If your contacts are usually saved without a country code, set your default region below so a bare local number still matches the same number stored in full international form. Leave these blank to match on the exact digits only.', 'disciple-tools-crm-sync' ); ?>
+                </p>
+                <table class="form-table" role="presentation">
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_crm_default_country_code"><?php esc_html_e( 'Default country dial code', 'disciple-tools-crm-sync' ); ?></label>
+                        </th>
+                        <td>
+                            <input type="text" inputmode="numeric" pattern="[0-9]*"
+                                    id="dt_crm_default_country_code"
+                                    name="default_country_code"
+                                    class="small-text"
+                                    value="<?php echo esc_attr( $settings['default_country_code'] ?? '' ); ?>"
+                                    placeholder="216">
+                            <p class="description"><?php esc_html_e( 'Digits only, without the "+". For example, 216 for Tunisia.', 'disciple-tools-crm-sync' ); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_crm_national_number_length"><?php esc_html_e( 'Local number length', 'disciple-tools-crm-sync' ); ?></label>
+                        </th>
+                        <td>
+                            <input type="number" min="0" max="15" step="1"
+                                    id="dt_crm_national_number_length"
+                                    name="national_number_length"
+                                    class="small-text"
+                                    value="<?php echo esc_attr( (string) ( $settings['national_number_length'] ?? '' ) ); ?>"
+                                    placeholder="8">
+                            <p class="description"><?php esc_html_e( 'How many digits a local number has once the country code and any trunk prefix are removed. For example, 8 for Tunisia.', 'disciple-tools-crm-sync' ); ?></p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="dt_crm_national_trunk_prefix"><?php esc_html_e( 'National trunk prefix', 'disciple-tools-crm-sync' ); ?></label>
+                        </th>
+                        <td>
+                            <input type="text" inputmode="numeric" pattern="[0-9]*"
+                                    id="dt_crm_national_trunk_prefix"
+                                    name="national_trunk_prefix"
+                                    class="small-text"
+                                    value="<?php echo esc_attr( $settings['national_trunk_prefix'] ?? '' ); ?>"
+                                    placeholder="0">
+                            <p class="description"><?php esc_html_e( 'The leading digit domestic numbers carry but the international form drops — usually 0. Leave blank if local numbers have no trunk prefix, as in Tunisia.', 'disciple-tools-crm-sync' ); ?></p>
+                        </td>
+                    </tr>
+                </table>
 
                 <h2><?php esc_html_e( 'Email Notifications', 'disciple-tools-crm-sync' ); ?></h2>
                 <table class="form-table" role="presentation">

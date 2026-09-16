@@ -367,13 +367,13 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 // serialized too, or the phone/email fallback below can be defeated
                 // by the same race the connector-ID lock above already closes.
                 //
-                // Uses the matcher's own trailing-digit-suffix key (not the full
-                // digit string) so two differently-formatted representations of the
-                // same number — e.g. with vs. without a country code — contend for
-                // the same lock instead of sailing past each other on different keys.
-                $phone_lock_suffix = Disciple_Tools_CRM_Sync_Contact_Matcher::phone_lock_key( $phone );
-                if ( '' !== $phone_lock_suffix ) {
-                    if ( ! $this->try_acquire_lock( $this->contact_lock_key( 'phone_' . $phone_lock_suffix ) ) ) {
+                // Uses the matcher's canonical key (not the raw digits) so two
+                // differently-formatted representations of the same number — e.g. with
+                // vs. without a country code — contend for the same lock instead of
+                // sailing past each other on different keys.
+                $phone_lock_key = Disciple_Tools_CRM_Sync_Contact_Matcher::phone_lock_key( $phone );
+                if ( '' !== $phone_lock_key ) {
+                    if ( ! $this->try_acquire_lock( $this->contact_lock_key( 'phone_' . $phone_lock_key ) ) ) {
                         Disciple_Tools_CRM_Sync_Logger::write(
                             $trigger_type, $respond_id, $dt_post_id, 'skipped', 'locked by concurrent import (phone)'
                         );
@@ -398,6 +398,16 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                 if ( ! $dt_post_id ) {
                     $dt_post_id = $this->matcher->find_by_phone_or_email( $phone, $email );
                     $action     = $dt_post_id ? 'update' : 'create';
+
+                    // Matched a contact this sync never created, only by a shared
+                    // phone/email. Leave it completely alone — no fields, no message
+                    // history — unless the operator opted in to updating existing ones.
+                    if ( $dt_post_id && $skip_existing ) {
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $respond_id, $dt_post_id, 'skipped', 'skip_existing (matched existing contact by phone/email)'
+                        );
+                        return true;
+                    }
                 }
 
                 // Handle merged contacts: if the returned profile ID differs from
@@ -453,71 +463,92 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
                     $respond_id = $canonical_id;
                 }
 
-                $fields = array_merge(
-                    $this->mapper->map_core_fields( $profile, 'create' === $action ),
-                    $this->mapper->map_custom_fields( $profile )
-                );
-
-                // Append platform-level source tags (e.g. facebook, tiktok) to the
-                // connector-level source already set by map_core_fields(). DT's
-                // multiselect field appends values, so this is safe on re-sync.
-                $platform_sources = $this->mapper->map_platform_sources( $channels );
-                if ( ! empty( $platform_sources['values'] ) ) {
-                    $existing = $fields['sources']['values'] ?? [];
-                    $fields['sources']['values'] = array_merge( $existing, $platform_sources['values'] );
-                }
-
-                if ( 'create' === $action ) {
-                    $result = DT_Posts::create_post( 'contacts', $fields, true, false );
-                } else {
-                    $result = DT_Posts::update_post( 'contacts', $dt_post_id, $fields, true, false );
-                }
-
-                if ( is_wp_error( $result ) ) {
-                    return new WP_Error(
-                        'dt_write_failed',
-                        $result->get_error_message(),
-                        [ 'respond_id' => $respond_id ]
+                // With "update existing contacts" left unchecked, a contact this sync
+                // already knows keeps every field it has. The one thing still allowed
+                // is finishing a message-history import a prior run started but didn't
+                // complete (tracked by history_synced) — never a change to the name,
+                // phone, email, tags or mapped fields.
+                $skip_field_updates = false;
+                if ( 'update' === $action && $skip_existing ) {
+                    $history_synced = get_post_meta(
+                        $dt_post_id, $this->connector->get_meta_key_prefix() . 'history_synced', true
                     );
+                    if ( $history_synced ) {
+                        Disciple_Tools_CRM_Sync_Logger::write(
+                            $trigger_type, $respond_id, $dt_post_id, 'skipped', 'skip_existing'
+                        );
+                        return true;
+                    }
+                    $skip_field_updates = true;
                 }
 
-                // On create: capture the new post ID from the result.
-                // On update via phone/email fallback: the meta was never written
-                // (find_existing_post() checks meta, not phone/email), so write it
-                // now so subsequent polls use the fast indexed meta lookup instead
-                // of the expensive LIKE query.
-                //
-                // If the meta write fails we bail here rather than continuing —
-                // completing the import against a post with no connector ID means
-                // the next run will create a duplicate instead of updating it.
-                if ( 'create' === $action ) {
-                    $dt_post_id   = (int) $result['ID'];
-                    $meta_saved   = add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
-                    if ( false === $meta_saved ) {
+                if ( ! $skip_field_updates ) {
+                    $fields = array_merge(
+                        $this->mapper->map_core_fields( $profile, 'create' === $action ),
+                        $this->mapper->map_custom_fields( $profile )
+                    );
+
+                    // Append platform-level source tags (e.g. facebook, tiktok) to the
+                    // connector-level source already set by map_core_fields(). DT's
+                    // multiselect field appends values, so this is safe on re-sync.
+                    $platform_sources = $this->mapper->map_platform_sources( $channels );
+                    if ( ! empty( $platform_sources['values'] ) ) {
+                        $existing = $fields['sources']['values'] ?? [];
+                        $fields['sources']['values'] = array_merge( $existing, $platform_sources['values'] );
+                    }
+
+                    if ( 'create' === $action ) {
+                        $result = DT_Posts::create_post( 'contacts', $fields, true, false );
+                    } else {
+                        $result = DT_Posts::update_post( 'contacts', $dt_post_id, $fields, true, false );
+                    }
+
+                    if ( is_wp_error( $result ) ) {
                         return new WP_Error(
-                            'meta_write_failed',
-                            sprintf( 'Connector ID meta could not be written for new DT post %d (connector ID: %s).', $dt_post_id, $respond_id )
+                            'dt_write_failed',
+                            $result->get_error_message(),
+                            [ 'respond_id' => $respond_id ]
                         );
                     }
-                } elseif ( ! get_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', true ) ) {
-                    $meta_saved = add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
-                    if ( false === $meta_saved ) {
-                        return new WP_Error(
-                            'meta_write_failed',
-                            sprintf( 'Connector ID meta could not be written for existing DT post %d (connector ID: %s).', $dt_post_id, $respond_id )
+
+                    // On create: capture the new post ID from the result.
+                    // On update via phone/email fallback: the meta was never written
+                    // (find_existing_post() checks meta, not phone/email), so write it
+                    // now so subsequent polls use the fast indexed meta lookup instead
+                    // of the expensive LIKE query.
+                    //
+                    // If the meta write fails we bail here rather than continuing —
+                    // completing the import against a post with no connector ID means
+                    // the next run will create a duplicate instead of updating it.
+                    if ( 'create' === $action ) {
+                        $dt_post_id   = (int) $result['ID'];
+                        $meta_saved   = add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
+                        if ( false === $meta_saved ) {
+                            return new WP_Error(
+                                'meta_write_failed',
+                                sprintf( 'Connector ID meta could not be written for new DT post %d (connector ID: %s).', $dt_post_id, $respond_id )
+                            );
+                        }
+                    } elseif ( ! get_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', true ) ) {
+                        $meta_saved = add_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'id', $respond_id, true );
+                        if ( false === $meta_saved ) {
+                            return new WP_Error(
+                                'meta_write_failed',
+                                sprintf( 'Connector ID meta could not be written for existing DT post %d (connector ID: %s).', $dt_post_id, $respond_id )
+                            );
+                        }
+                    }
+
+                    // Upsert activity-feed note for mapped fields.
+                    $activity_fields = $this->mapper->get_activity_feed_fields( $profile );
+                    if ( ! empty( $activity_fields ) ) {
+                        $this->activity_feed_writer->upsert(
+                            $dt_post_id,
+                            $activity_fields,
+                            $this->connector->get_meta_key_prefix(),
+                            $this->connector->get_label()
                         );
                     }
-                }
-
-                // Upsert activity-feed note for mapped fields.
-                $activity_fields = $this->mapper->get_activity_feed_fields( $profile );
-                if ( ! empty( $activity_fields ) ) {
-                    $this->activity_feed_writer->upsert(
-                        $dt_post_id,
-                        $activity_fields,
-                        $this->connector->get_meta_key_prefix(),
-                        $this->connector->get_label()
-                    );
                 }
 
                 // Import message history.
@@ -542,8 +573,11 @@ if ( ! class_exists( 'Disciple_Tools_CRM_Sync_Processor' ) ) {
 
                 update_post_meta( $dt_post_id, $this->connector->get_meta_key_prefix() . 'history_synced', '1' );
 
+                // An interrupted import that only finished its message history didn't
+                // touch any contact fields, so don't log it as an 'update'.
+                $success_detail = $skip_field_updates ? 'history_completed' : $action;
                 Disciple_Tools_CRM_Sync_Logger::write(
-                    $trigger_type, $respond_id, $dt_post_id, 'success', $action
+                    $trigger_type, $respond_id, $dt_post_id, 'success', $success_detail
                 );
 
                 return true;
